@@ -1,0 +1,168 @@
+173-  const [reviewerModel, setReviewerModel] = useState<string>('llama3.2');
+174-  const [researcherModel, setResearcherModel] = useState<string>('llama3.2');
+175-
+176-  // Ollama Connection and Installed Models state
+177-  const [ollamaConnectionStatus, setOllamaConnectionStatus] = useState<'unchecked' | 'connected' | 'failed'>('unchecked');
+178:  const [installedOllamaModels, setInstalledOllamaModels] = useState<string[]>([
+179-    'llama3.2',
+180-    'llama3.1',
+181-    'qwen2.5-coder:7b',
+182-    'qwen2.5:7b',
+183-    'mistral',
+--
+516-    };
+517-  }, [ollamaUrl]);
+518-
+519-  // Sync available Ollama models to default agent model states
+520-  useEffect(() => {
+521:    if (ollamaConnectionStatus === 'connected' && installedOllamaModels.length > 0) {
+522:      const coderOption = installedOllamaModels.find(m => m.toLowerCase().includes('coder')) || installedOllamaModels[0];
+523:      const generalOption = installedOllamaModels.find(m => m.toLowerCase().includes('llama3.2') || m.toLowerCase().includes('llama3') || m.toLowerCase().includes('qwen')) || installedOllamaModels[0];
+524-      
+525:      setPlannerModel(prev => installedOllamaModels.includes(prev) ? prev : generalOption);
+526:      setCoderModel(prev => installedOllamaModels.includes(prev) ? prev : coderOption);
+527:      setReviewerModel(prev => installedOllamaModels.includes(prev) ? prev : generalOption);
+528:      setResearcherModel(prev => installedOllamaModels.includes(prev) ? prev : generalOption);
+529-    }
+530:  }, [ollamaConnectionStatus, installedOllamaModels]);
+531-
+532-  // Sync Agent configs in states
+533-  useEffect(() => {
+534-    setAgents(prev => prev.map(agent => {
+535-      if (agent.id === 'planner') return { ...agent, model: engine === 'gemini' ? 'gemini-2.5-flash' : plannerModel };
+--
+1993-          {/* Ollama Connection Indicator */}
+1994-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#020503] border border-emerald-950 text-xs font-mono">
+1995-            <span className={`w-2.5 h-2.5 rounded-full ${ollamaConnectionStatus === 'connected' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse' : 'bg-amber-500 animate-pulse'}`}></span>
+1996-            <span className="text-emerald-400">
+1997-              {ollamaConnectionStatus === 'connected' 
+1998:                ? `Ollama: Active (${installedOllamaModels.length} models)` 
+1999-                : ollamaConnectionStatus === 'failed' 
+2000-                  ? 'Ollama: Offline' 
+2001-                  : 'Ollama: Connecting...'}
+2002-            </span>
+2003-          </div>
+--
+2219-              <span>SESSION TOKENS:</span>
+2220-              <span className="text-[#00ff66] font-bold">{sessionTokens.toLocaleString()} T</span>
+2221-            </div>
+2222-            <div className="flex justify-between">
+2223-              <span>LOCAL MODELS:</span>
+2224:              <span className="text-[#00ff66] font-bold">{installedOllamaModels.length} DETECTED</span>
+2225-            </div>
+2226-            <div className="flex justify-between">
+2227-              <span>LEDGER SIZE:</span>
+2228-              <span className="text-[#00ff66] font-bold">{memories.length} ENTRIES</span>
+2229-            </div>
+--
+2655-                <span className="font-bold block uppercase tracking-wider">
+2656-                  {ollamaConnectionStatus === 'connected' ? '✓ Connected to Local Ollama Node' : '⚠ Direct Ollama Node Offline'}
+2657-                </span>
+2658-                <p className="leading-relaxed opacity-90">
+2659-                  {ollamaConnectionStatus === 'connected' 
+2660:                    ? `Found ${installedOllamaModels.length} active models compiled on host machine. Agents are configured to auto-select matching parameters.`
+2661-                    : `Could not verify connection to Ollama at '${ollamaUrl}'. Ensure Ollama is running ('ollama serve') with host CORS origins configured ('OLLAMA_ORIGINS="*"'). Displaying standard fallback models.`}
+2662-                </p>
+2663-              </div>
+2664-
+2665-              {/* Models Config Grid */}
+--
+2690-                      <div className="grid grid-cols-1 gap-3.5">
+2691-                        {/* Planner Model Assignment Selector */}
+2692-                        <div className="space-y-1">
+2693-                          <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">🧠 Planner Model</label>
+2694-                          <select
+2695:                            value={installedOllamaModels.includes(plannerModel) ? plannerModel : 'custom'}
+2696-                            onChange={(e) => {
+2697-                              if (e.target.value !== 'custom') {
+2698-                                setPlannerModel(e.target.value);
+2699-                              }
+2700-                            }}
+2701-                            className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+2702-                          >
+2703:                            {installedOllamaModels.map(m => (
+2704-                              <option key={m} value={m}>{m}</option>
+2705-                            ))}
+2706-                            <option value="custom">-- Custom model name --</option>
+2707-                          </select>
+2708:                          {(!installedOllamaModels.includes(plannerModel)) && (
+2709-                            <input
+2710-                              type="text"
+2711-                              value={plannerModel}
+2712-                              onChange={(e) => setPlannerModel(e.target.value)}
+2713-                              placeholder="Type custom model name..."
+--
+2718-
+2719-                        {/* Coder Model Assignment Selector */}
+2720-                        <div className="space-y-1">
+2721-                          <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">💻 Coder Model</label>
+2722-                          <select
+2723:                            value={installedOllamaModels.includes(coderModel) ? coderModel : 'custom'}
+2724-                            onChange={(e) => {
+2725-                              if (e.target.value !== 'custom') {
+2726-                                setCoderModel(e.target.value);
+2727-                              }
+2728-                            }}
+2729-                            className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+2730-                          >
+2731:                            {installedOllamaModels.map(m => (
+2732-                              <option key={m} value={m}>{m}</option>
+2733-                            ))}
+2734-                            <option value="custom">-- Custom model name --</option>
+2735-                          </select>
+2736:                          {(!installedOllamaModels.includes(coderModel)) && (
+2737-                            <input
+2738-                              type="text"
+2739-                              value={coderModel}
+2740-                              onChange={(e) => setCoderModel(e.target.value)}
+2741-                              placeholder="Type custom model name..."
+--
+2746-
+2747-                        {/* Reviewer Model Assignment Selector */}
+2748-                        <div className="space-y-1">
+2749-                          <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">🔍 Reviewer Model</label>
+2750-                          <select
+2751:                            value={installedOllamaModels.includes(reviewerModel) ? reviewerModel : 'custom'}
+2752-                            onChange={(e) => {
+2753-                              if (e.target.value !== 'custom') {
+2754-                                setReviewerModel(e.target.value);
+2755-                              }
+2756-                            }}
+2757-                            className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+2758-                          >
+2759:                            {installedOllamaModels.map(m => (
+2760-                              <option key={m} value={m}>{m}</option>
+2761-                            ))}
+2762-                            <option value="custom">-- Custom model name --</option>
+2763-                          </select>
+2764:                          {(!installedOllamaModels.includes(reviewerModel)) && (
+2765-                            <input
+2766-                              type="text"
+2767-                              value={reviewerModel}
+2768-                              onChange={(e) => setReviewerModel(e.target.value)}
+2769-                              placeholder="Type custom model name..."
+--
+2774-
+2775-                        {/* Researcher Model Assignment Selector */}
+2776-                        <div className="space-y-1">
+2777-                          <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">🌐 Researcher Model</label>
+2778-                          <select
+2779:                            value={installedOllamaModels.includes(researcherModel) ? researcherModel : 'custom'}
+2780-                            onChange={(e) => {
+2781-                              if (e.target.value !== 'custom') {
+2782-                                setResearcherModel(e.target.value);
+2783-                              }
+2784-                            }}
+2785-                            className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+2786-                          >
+2787:                            {installedOllamaModels.map(m => (
+2788-                              <option key={m} value={m}>{m}</option>
+2789-                            ))}
+2790-                            <option value="custom">-- Custom model name --</option>
+2791-                          </select>
+2792:                          {(!installedOllamaModels.includes(researcherModel)) && (
+2793-                            <input
+2794-                              type="text"
+2795-                              value={researcherModel}
+2796-                              onChange={(e) => setResearcherModel(e.target.value)}
+2797-                              placeholder="Type custom model name..."

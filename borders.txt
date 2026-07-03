@@ -1,0 +1,14 @@
+border-[#00ff66]
+border-[#00ff66]
+border-[#00ff66]
+border-[#10b981]/40
+border-[#10b981]/40
+border-[#10b981]/40
+border-[#10b981]/40
+border-[#00ff66]/20
+border-[#00ff66]
+border-[#0f2416]
+border-[#00ff66]/50
+border-[#00ff66]/20
+border-[#00ff66]/20
+border-[#00ff66]/20

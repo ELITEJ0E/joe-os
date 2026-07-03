@@ -1,0 +1,6 @@
+{
+  "name": "JoelOS",
+  "description": "An advanced collaborative AI Operating System with a multi-agent orchestration pipeline, visual flow state tracker, and persistent vector-inspired semantic memory.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
