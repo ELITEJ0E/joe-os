@@ -85,10 +85,16 @@ async function executeWithGeminiFallback<T>(
     } catch (err: any) {
       lastError = err;
       console.error(`Gemini call failed for API key index ${i}:`, err.message);
+      
+      const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('exhausted') || err.status === 503;
+      
+      // We also fallback on 401/403 just in case they have a mix of dead/live keys
+      // But log it clearly so they know why it failed.
       if (i < keysToTry.length - 1) {
         console.warn(`Falling back to next Gemini API key...`);
         continue;
       }
+      
       throw err;
     }
   }
@@ -1716,9 +1722,20 @@ app.post('/api/studio/jobs', async (req, res) => {
                 throw new Error(`Pollinations API failed with status ${res.status}: ${text}`);
               }
               
+              const contentType = res.headers.get('content-type') || '';
+              if (contentType.includes('text/html') || contentType.includes('application/json')) {
+                const text = await res.text();
+                throw new Error(`Pollinations API returned invalid content type (${contentType}): ${text.slice(0, 100)}`);
+              }
+              
               const arrayBuffer = await res.arrayBuffer();
               const buffer = Buffer.from(arrayBuffer);
-              return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+              if (buffer.length === 0) {
+                throw new Error('Pollinations API returned an empty image buffer.');
+              }
+              
+              const mimeType = contentType || 'image/jpeg';
+              return `data:${mimeType};base64,${buffer.toString('base64')}`;
             }
           }
         };
