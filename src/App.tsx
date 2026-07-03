@@ -77,6 +77,41 @@ function CustomSidebarTrigger() {
 }
 import remarkGfm from 'remark-gfm';
 
+function preprocessAgentMentions(text: string): string {
+  if (!text) return '';
+  const parts = text.split(/(```[\s\S]*?```|`[^`\n]*?`)/g);
+  const terms = [
+    'Cortana',
+    'J\\.A\\.R\\.V\\.I\\.S\\.',
+    'JARVIS',
+    'Jarvis',
+    'Aura',
+    'F\\.R\\.I\\.D\\.A\\.Y\\.',
+    'FRIDAY',
+    'Friday',
+    'Cash',
+    'Nova',
+    'Forge',
+    'Titan',
+    'Athena',
+    'Memory',
+    'Researcher',
+    'Planner',
+    'Coder',
+    'Reviewer'
+  ];
+  const processedParts = parts.map((part) => {
+    if (part.startsWith('`')) return part;
+    let temp = part;
+    for (const term of terms) {
+      const regex = new RegExp(`\\*{0,2}(?:^|(?<=[\\s.,!?;:()*-]))(${term})(?:$|(?=[\\s.,!?;:()*-]))\\*{0,2}`, 'gi');
+      temp = temp.replace(regex, '**$1**');
+    }
+    return temp;
+  });
+  return processedParts.join('');
+}
+
 // 128-dimensional local vector hashing helper
 function getLocalEmbeddingVector(text: string): number[] {
   const dims = 128;
@@ -460,8 +495,8 @@ export default function App() {
     if (saved) return JSON.parse(saved);
     return [
       { id: '1', severity: 'critical', title: 'Server health check failed', detail: 'Backend not responding at /api/health', timestamp: 'NOW', agentSource: 'CORTANA' },
-      { id: '2', severity: 'warning', title: 'Pipeline has no runs today', detail: 'No agent tasks executed in last 24h', timestamp: '12H AGO', agentSource: 'BOSS' },
-      { id: '3', severity: 'info', title: 'Memory ledger growing', detail: `0 entries stored in brain`, timestamp: 'ONGOING', agentSource: 'MEMORY' },
+      { id: '2', severity: 'warning', title: 'Pipeline has no runs today', detail: 'No agent tasks executed in last 24h', timestamp: '12H AGO', agentSource: 'F.R.I.D.A.Y.' },
+      { id: '3', severity: 'info', title: 'Athena ledger growing', detail: `0 entries stored in brain`, timestamp: 'ONGOING', agentSource: 'ATHENA' },
     ];
   });
 
@@ -471,7 +506,7 @@ export default function App() {
     if (saved) return JSON.parse(saved);
     return [
       { id: '1', title: 'Complete daily pipeline run', detail: 'Run full Researcher→Planner→Coder→Reviewer pipeline', agentSource: 'CORTANA', status: 'queued', createdAt: new Date().toLocaleTimeString(), priority: 'high' },
-      { id: '2', title: 'Review memory ledger', detail: 'Verify items in brain store. Archive old entries', agentSource: 'BOSS', status: 'queued', createdAt: new Date().toLocaleTimeString(), priority: 'medium' },
+      { id: '2', title: 'Review Athena memory ledger', detail: 'Verify items in brain store. Archive old entries', agentSource: 'F.R.I.D.A.Y.', status: 'queued', createdAt: new Date().toLocaleTimeString(), priority: 'medium' },
     ];
   });
 
@@ -1112,7 +1147,7 @@ export default function App() {
       },
       {
         id: 'jarvis',
-        name: 'Jarvis',
+        name: 'J.A.R.V.I.S.',
         icon: '/images/jarvis_icon_1782804403241.jpg',
         dotColor: 'bg-blue-500 shadow-blue-500/50 text-blue-400 border-blue-500/20',
         model: 'gemini-2.5-flash',
@@ -1136,7 +1171,7 @@ export default function App() {
       },
       {
         id: 'boss',
-        name: 'Boss',
+        name: 'F.R.I.D.A.Y.',
         icon: '/images/boss_icon_1782804579792.jpg',
         dotColor: 'bg-amber-500 shadow-amber-500/50 text-amber-400 border-amber-500/20',
         model: 'gemini-2.5-flash',
@@ -1160,7 +1195,7 @@ export default function App() {
       },
       {
         id: 'forge',
-        name: 'Forge',
+        name: 'Nova',
         icon: '/images/forge_icon_1782804761591.jpg',
         dotColor: 'bg-slate-400 shadow-slate-400/50 text-slate-300 border-slate-500/20',
         model: 'gemini-2.5-flash',
@@ -1184,7 +1219,7 @@ export default function App() {
       },
       {
         id: 'memory',
-        name: 'Memory',
+        name: 'Athena',
         icon: '/images/memory_icon_1782804882461.jpg',
         dotColor: 'bg-purple-500 shadow-purple-500/50 text-purple-400 border-purple-500/20',
         model: 'Vector Engine',
@@ -1248,13 +1283,13 @@ export default function App() {
   // Orchestration progress nodes
   const [pipelineNodes, setPipelineNodes] = useState<PipelineNode[]>([
     { id: 'start', label: 'User Intent', status: 'pending' },
-    { id: 'memory', label: 'Memory Recall', status: 'pending' },
+    { id: 'memory', label: 'Athena Recall', status: 'pending' },
     { id: 'cortana', label: 'Cortana Orchestrator', status: 'pending' },
-    { id: 'jarvis', label: 'Jarvis (Communications)', status: 'pending' },
+    { id: 'jarvis', label: 'J.A.R.V.I.S. (Communications)', status: 'pending' },
     { id: 'aura', label: 'Aura (Content)', status: 'pending' },
-    { id: 'boss', label: 'Boss (Operations)', status: 'pending' },
+    { id: 'boss', label: 'F.R.I.D.A.Y. (Operations)', status: 'pending' },
     { id: 'cash', label: 'Cash (Finance)', status: 'pending' },
-    { id: 'forge', label: 'Forge (Build)', status: 'pending' },
+    { id: 'forge', label: 'Nova (Build)', status: 'pending' },
     { id: 'titan', label: 'Titan (Strategy)', status: 'pending' },
     { id: 'synthesis', label: 'Final deliverable', status: 'pending' },
   ]);
@@ -1675,11 +1710,11 @@ export default function App() {
               // Find slowest agent
               const timings = [
                 { name: 'Cortana', val: run.cortana },
-                { name: 'Jarvis', val: run.jarvis },
+                { name: 'J.A.R.V.I.S.', val: run.jarvis },
                 { name: 'Aura', val: run.aura },
-                { name: 'Boss', val: run.boss },
+                { name: 'F.R.I.D.A.Y.', val: run.boss },
                 { name: 'Cash', val: run.cash },
-                { name: 'Forge', val: run.forge },
+                { name: 'Nova', val: run.forge },
                 { name: 'Titan', val: run.titan }
               ];
               const slowest = timings.reduce((prev, curr) => prev.val > curr.val ? prev : curr);
@@ -1690,11 +1725,11 @@ export default function App() {
                   <div className="absolute bottom-[calc(100%-8px)] left-1/2 -translate-x-1/2 z-20 hidden group-hover:flex flex-col bg-black border border-emerald-500/40 p-2.5 rounded-lg text-[9px] text-slate-200 whitespace-nowrap shadow-2xl font-mono text-left space-y-1">
                     <span className="text-[10px] font-bold text-white border-b border-emerald-950 pb-1 block mb-1">Run at {run.timestamp}</span>
                     <span className="flex justify-between gap-4"><span>Cortana:</span> <span className="text-purple-400 font-bold">{run.cortana.toFixed(1)}s</span></span>
-                    <span className="flex justify-between gap-4"><span>Jarvis:</span> <span className="text-blue-400 font-bold">{run.jarvis.toFixed(1)}s</span></span>
+                    <span className="flex justify-between gap-4"><span>J.A.R.V.I.S.:</span> <span className="text-blue-400 font-bold">{run.jarvis.toFixed(1)}s</span></span>
                     <span className="flex justify-between gap-4"><span>Aura:</span> <span className="text-pink-400 font-bold">{run.aura.toFixed(1)}s</span></span>
-                    <span className="flex justify-between gap-4"><span>Boss:</span> <span className="text-amber-400 font-bold">{run.boss.toFixed(1)}s</span></span>
+                    <span className="flex justify-between gap-4"><span>F.R.I.D.A.Y.:</span> <span className="text-amber-400 font-bold">{run.boss.toFixed(1)}s</span></span>
                     <span className="flex justify-between gap-4"><span>Cash:</span> <span className="text-emerald-400 font-bold">{run.cash.toFixed(1)}s</span></span>
-                    <span className="flex justify-between gap-4"><span>Forge:</span> <span className="text-slate-400 font-bold">{run.forge.toFixed(1)}s</span></span>
+                    <span className="flex justify-between gap-4"><span>Nova:</span> <span className="text-slate-400 font-bold">{run.forge.toFixed(1)}s</span></span>
                     <span className="flex justify-between gap-4"><span>Titan:</span> <span className="text-violet-400 font-bold">{run.titan.toFixed(1)}s</span></span>
                     <div className="border-t border-emerald-950 pt-1 mt-1 text-[8px] flex justify-between font-bold text-rose-400">
                       <span>BOTTLENECK:</span>
@@ -1723,11 +1758,11 @@ export default function App() {
           {/* Legend */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-4 pt-3.5 border-t border-emerald-950/40 text-[9px]">
             <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-purple-500"></span><span className="text-emerald-500/80">Cortana</span></div>
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-blue-500"></span><span className="text-emerald-500/80">Jarvis</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-blue-500"></span><span className="text-emerald-500/80">J.A.R.V.I.S.</span></div>
             <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-pink-500"></span><span className="text-emerald-500/80">Aura</span></div>
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-amber-500"></span><span className="text-emerald-500/80">Boss</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-amber-500"></span><span className="text-emerald-500/80">F.R.I.D.A.Y.</span></div>
             <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-emerald-500"></span><span className="text-emerald-500/80">Cash</span></div>
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-slate-400"></span><span className="text-emerald-500/80">Forge</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-slate-400"></span><span className="text-emerald-500/80">Nova</span></div>
             <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-violet-500"></span><span className="text-emerald-500/80">Titan</span></div>
           </div>
         </div>
@@ -1752,11 +1787,11 @@ export default function App() {
                   const total = run.cortana + run.jarvis + run.aura + run.boss + run.cash + run.forge + run.titan;
                   const timings = [
                     { name: 'Cortana (Orchestrator)', val: run.cortana, icon: '👑' },
-                    { name: 'Jarvis (Comms)', val: run.jarvis, icon: '💬' },
+                    { name: 'J.A.R.V.I.S. (Comms)', val: run.jarvis, icon: '💬' },
                     { name: 'Aura (Brand)', val: run.aura, icon: '📢' },
-                    { name: 'Boss (Ops)', val: run.boss, icon: '📊' },
+                    { name: 'F.R.I.D.A.Y. (Ops)', val: run.boss, icon: '📊' },
                     { name: 'Cash (Finance)', val: run.cash, icon: '💵' },
-                    { name: 'Forge (Build)', val: run.forge, icon: '🛠️' },
+                    { name: 'Nova (Build)', val: run.forge, icon: '🛠️' },
                     { name: 'Titan (Strategy)', val: run.titan, icon: '🎯' }
                   ];
                   const slowest = timings.reduce((prev, curr) => prev.val > curr.val ? prev : curr);
@@ -2216,7 +2251,7 @@ export default function App() {
           return next;
         });
         setPipelineNodes(nodes => nodes.map(n => n.id === 'memory' ? { ...n, status: 'completed' } : n));
-        addActivity('Memory', '#10b981', 'Completed semantic memory retrieval and brain ledger linkage.');
+        addActivity('Athena', '#10b981', 'Completed semantic memory retrieval and brain ledger linkage.');
       } catch (err: any) {
         console.error('Memory Agent fail:', err);
         setNodeContexts(prev => ({
@@ -3018,6 +3053,8 @@ export default function App() {
       return <CodeDiffViewer oldCode={msg.previousRawOutput} newCode={text} />;
     }
 
+    const preprocessedText = preprocessAgentMentions(text);
+
     return (
       <div className="space-y-3.5 leading-relaxed text-slate-200 text-[14.5px] font-sans">
         <Markdown
@@ -3031,7 +3068,49 @@ export default function App() {
             ul: ({node, ...props}) => <ul className="my-2 space-y-1" {...props} />,
             ol: ({node, ...props}) => <ol className="my-2 space-y-1 list-decimal list-outside ml-4" {...props} />,
             li: ({node, ...props}) => <li className="text-slate-200 marker:text-[#00ff66]" {...props} />,
-            strong: ({node, ...props}) => <strong className="font-bold text-white" {...props} />,
+            strong: ({node, children, ...props}) => {
+              const textContent = String(children || '').trim();
+              const upperText = textContent.toUpperCase();
+              
+              if (upperText === 'CORTANA') {
+                return <strong className="font-extrabold text-[#c084fc] bg-[#7c3aed]/15 px-1.5 py-0.5 rounded border border-[#7c3aed]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'J.A.R.V.I.S.' || upperText === 'JARVIS') {
+                return <strong className="font-extrabold text-[#60a5fa] bg-[#2563eb]/15 px-1.5 py-0.5 rounded border border-[#2563eb]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'AURA') {
+                return <strong className="font-extrabold text-[#f472b6] bg-[#ec4899]/15 px-1.5 py-0.5 rounded border border-[#ec4899]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'F.R.I.D.A.Y.' || upperText === 'FRIDAY' || upperText === 'BOSS') {
+                return <strong className="font-extrabold text-[#fbbf24] bg-[#f59e0b]/15 px-1.5 py-0.5 rounded border border-[#f59e0b]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'CASH') {
+                return <strong className="font-extrabold text-[#34d399] bg-[#10b981]/15 px-1.5 py-0.5 rounded border border-[#10b981]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'NOVA' || upperText === 'FORGE') {
+                return <strong className="font-extrabold text-[#cbd5e1] bg-[#6b7280]/20 px-1.5 py-0.5 rounded border border-[#6b7280]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'TITAN') {
+                return <strong className="font-extrabold text-[#a78bfa] bg-[#8b5cf6]/15 px-1.5 py-0.5 rounded border border-[#8b5cf6]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'ATHENA' || upperText === 'MEMORY') {
+                return <strong className="font-extrabold text-[#c084fc] bg-[#a78bfa]/15 px-1.5 py-0.5 rounded border border-[#a78bfa]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'RESEARCHER') {
+                return <strong className="font-extrabold text-[#60a5fa] bg-[#3b82f6]/15 px-1.5 py-0.5 rounded border border-[#3b82f6]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'PLANNER') {
+                return <strong className="font-extrabold text-[#fbbf24] bg-[#f59e0b]/15 px-1.5 py-0.5 rounded border border-[#f59e0b]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'CODER') {
+                return <strong className="font-extrabold text-[#34d399] bg-[#10b981]/15 px-1.5 py-0.5 rounded border border-[#10b981]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              if (upperText === 'REVIEWER') {
+                return <strong className="font-extrabold text-[#f472b6] bg-[#ec4899]/15 px-1.5 py-0.5 rounded border border-[#ec4899]/30 inline-block font-mono text-[0.9em]" {...props}>{children}</strong>;
+              }
+              
+              return <strong className="font-bold text-white" {...props}>{children}</strong>;
+            },
             code: ({node, inline, className, children, ...props}: any) => {
               const match = /language-(\w+)/.exec(className || '');
               const language = match ? match[1] : 'code';
@@ -3069,7 +3148,7 @@ export default function App() {
             }
           }}
         >
-          {text}
+          {preprocessedText}
         </Markdown>
       </div>
     );
@@ -4720,10 +4799,10 @@ export default function App() {
           <button
             onClick={() => setIsMemoryDrawerOpen(true)}
             className="px-2.5 py-1.5 rounded-lg border border-emerald-900/40 text-emerald-500 hover:text-[#00ff66] hover:border-emerald-500/40 hover:bg-emerald-950/20 flex items-center gap-1.5 cursor-pointer select-none font-bold text-[10px] transition-all"
-            title="Memory history database ledger"
+            title="Athena memory history ledger"
           >
             <Database size={12} />
-            <span className="hidden md:inline">MEMORY LEDGER</span>
+            <span className="hidden md:inline">ATHENA LEDGER</span>
           </button>
         </div>
       </nav>
@@ -5696,7 +5775,7 @@ export default function App() {
                 <div className="flex items-center justify-between pb-2 border-b border-emerald-950">
                   <div className="flex items-center gap-2">
                     <Database size={16} className="text-emerald-400" />
-                    <h3 className="font-display font-semibold text-sm text-white">Semantic Recall & Memory Store</h3>
+                    <h3 className="font-display font-semibold text-sm text-white">Semantic Recall & Athena Store</h3>
                   </div>
                   <button
                     onClick={() => {
@@ -5718,7 +5797,7 @@ export default function App() {
                 </div>
                 
                 <p className="text-xs text-emerald-500/60 leading-relaxed">
-                  Every complete multi-agent pipeline workflow is indexed to a persistent cloud-backed memory storage (<span className="font-mono">brain.json</span>) as highly scannable contextual metadata blocks. Memory utilizes a high-performance Cosine Similarity calculation to check relevancy on query recall, feeding history directly into upcoming pipelines automatically.
+                  Every complete multi-agent pipeline workflow is indexed to a persistent cloud-backed memory storage (<span className="font-mono">brain.json</span>) as highly scannable contextual metadata blocks. Athena utilizes a high-performance Cosine Similarity calculation to check relevancy on query recall, feeding history directly into upcoming pipelines automatically.
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
@@ -5735,7 +5814,7 @@ export default function App() {
                     <span className="text-lg font-bold text-slate-100 font-display">Local JSON</span>
                   </div>
                   <div className="p-3 bg-[#0a0f0c] rounded-xl border border-emerald-950">
-                    <span className="text-[10px] text-emerald-500/50 uppercase tracking-wider block font-mono">Memory Check</span>
+                    <span className="text-[10px] text-emerald-500/50 uppercase tracking-wider block font-mono">Athena Check</span>
                     <span className="text-lg font-bold text-emerald-400 font-display">Automatic</span>
                   </div>
                 </div>
@@ -5778,7 +5857,7 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-[#0a0f0c] border border-emerald-950 font-mono text-xs space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="w-5 text-right text-emerald-400">1.</span>
-                    <span className="font-bold text-slate-200">Memory Agent</span>
+                    <span className="font-bold text-slate-200">Athena Agent</span>
                     <span className="text-emerald-500/60">indexes past solutions & injects previous patterns</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -6052,14 +6131,14 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <h3 className="text-xs uppercase tracking-widest text-emerald-300 font-bold flex items-center gap-2 px-2.5 py-1 rounded bg-[#0b2114] border border-emerald-500/25">
                     <Database size={13} className="text-[#00ff66]" />
-                    <span>Workspace Memory</span>
+                    <span>Athena Memory Ledger</span>
                   </h3>
                   <span className="text-[10px] bg-[#00ff66]/10 text-[#00ff66] border border-[#00ff66]/20 px-2 py-0.5 rounded font-bold">ACTIVE</span>
                 </div>
                 <button
                   onClick={() => setIsMemoryDrawerOpen(false)}
                   className="p-1.5 rounded-lg text-emerald-500 hover:text-white hover:bg-emerald-950/40 transition-all cursor-pointer"
-                  title="Close Memory"
+                  title="Close Athena Ledger"
                 >
                   <X size={16} />
                 </button>
