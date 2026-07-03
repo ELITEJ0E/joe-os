@@ -574,6 +574,7 @@ export default function App() {
   const [studioModel, setStudioModel] = useState('gemini-2.5-flash-image');
   const [studioType, setStudioType] = useState<'image' | 'video' | 'voice'>('image');
   const [isStudioSubmitting, setIsStudioSubmitting] = useState(false);
+  const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
 
   // Periodic API synchronization
   useEffect(() => {
@@ -4168,7 +4169,8 @@ export default function App() {
                                 src={job.resultUrl}
                                 alt={job.prompt}
                                 referrerPolicy="no-referrer"
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 cursor-pointer"
+                                onClick={() => setFullScreenImage(job.resultUrl)}
                               />
                             )}
                             {job.type === 'video' && (
@@ -6222,6 +6224,46 @@ export default function App() {
               </div>
 
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fullScreenImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4"
+            onClick={() => setFullScreenImage(null)}
+          >
+            <button
+              className="absolute top-6 right-6 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-white transition-colors"
+              onClick={(e) => { e.stopPropagation(); setFullScreenImage(null); }}
+            >
+              <X size={24} />
+            </button>
+            <div className="relative max-w-full max-h-full flex flex-col items-center group">
+              <img
+                src={fullScreenImage}
+                alt="Full View"
+                className="max-w-full max-h-[85vh] object-contain rounded shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div 
+                className="absolute bottom-4 flex gap-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <a
+                  href={fullScreenImage}
+                  download="joelos-image-generation.jpg"
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-full shadow-lg flex items-center gap-2 transform hover:scale-105 transition-all"
+                >
+                  <Download size={18} />
+                  Download Image
+                </a>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

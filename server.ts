@@ -84,9 +84,9 @@ async function executeWithGeminiFallback<T>(
       return await operation(client);
     } catch (err: any) {
       lastError = err;
-      const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('exhausted') || err.status === 503;
-      if (isRateLimit && i < keysToTry.length - 1) {
-        console.warn(`Gemini API key hit rate limit/quota, falling back to next key...`);
+      console.error(`Gemini call failed for API key index ${i}:`, err.message);
+      if (i < keysToTry.length - 1) {
+        console.warn(`Falling back to next Gemini API key...`);
         continue;
       }
       throw err;
@@ -395,18 +395,24 @@ app.post('/api/chat', async (req, res) => {
       }
 
       if (stream) {
-        const streamResponse = await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
-          return await client.models.generateContentStream({
+        await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
+          const streamResponse = await client.models.generateContentStream({
             model: mappedModel,
             contents,
             config,
           });
-        });
 
-        for await (const chunk of streamResponse) {
-          const text = chunk.text || '';
-          res.write(`data: ${JSON.stringify({ text })}\n\n`);
-        }
+          // Await the first chunk to catch authentication or rate limit errors immediately
+          let firstChunkReceived = false;
+          for await (const chunk of streamResponse) {
+            firstChunkReceived = true;
+            const text = chunk.text || '';
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+          if (!firstChunkReceived) {
+             // Stream ended without chunks
+          }
+        });
         return res.end();
       } else {
         const response = await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
@@ -1644,38 +1650,52 @@ app.post('/api/studio/jobs', async (req, res) => {
               }
 
               let lastError: any;
-              for (const currentKey of keysToTry) {
+              for (let i = 0; i < keysToTry.length; i++) {
+                const currentKey = keysToTry[i];
                 try {
                   const client = new GoogleGenAI({ 
                     apiKey: currentKey,
                     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
                   });
                   
-                  const response = await client.models.generateContent({
-                    model: 'gemini-2.5-flash-image',
-                    contents: [{ role: 'user', parts: [{ text: promptText }] }],
-                    config: {
-                       responseModalities: ["IMAGE"] as any
-                    }
-                  });
-                  
-                  const candidates = response.candidates;
-                  if (candidates && candidates.length > 0) {
-                     for (const part of candidates[0].content.parts) {
-                       if (part.inlineData && part.inlineData.data) {
-                         return `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data}`;
-                       }
-                     }
+                  let response;
+                  try {
+                    response = await client.models.generateContent({
+                      model: 'gemini-2.5-flash-image',
+                      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+                      config: {
+                         responseModalities: ["IMAGE"] as any
+                      }
+                    });
+                  } catch (apiErr: any) {
+                    throw new Error(`API_ERROR [Status: ${apiErr.status || 'UNKNOWN'}]: ${apiErr.message}`);
                   }
-                  throw new Error('No image returned from Gemini generateContent');
+                  
+                  try {
+                    const candidates = response.candidates;
+                    if (candidates && candidates.length > 0) {
+                       for (const part of candidates[0].content.parts) {
+                         if (part.inlineData && part.inlineData.data) {
+                           return `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data}`;
+                         }
+                       }
+                    }
+                    throw new Error('PARSE_ERROR: Response shape missing expected inlineData.');
+                  } catch (parseErr: any) {
+                    if (parseErr.message.includes('PARSE_ERROR')) {
+                      throw parseErr;
+                    }
+                    throw new Error(`PARSE_ERROR: ${parseErr.message}`);
+                  }
                 } catch (err: any) {
                   lastError = err;
-                  const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('exhausted');
-                  if (isRateLimit && keysToTry.length > 1) {
-                    console.warn(`Gemini API key hit rate limit/quota, falling back to next key...`);
+                  console.error(`Gemini provider failed for API key index ${i}:`, err.message);
+                  
+                  if (keysToTry.length > 1 && i < keysToTry.length - 1) {
+                    console.warn(`Falling back to next Gemini API key...`);
                     continue;
                   }
-                  break; // break on non rate limit error, or if we want to fallback anyway? user said "fallback 1 after another at least 5-10 api keys so that it would technically make my calls to gemini models unlimited" -> so continue on rate limit.
+                  break;
                 }
               }
               throw lastError;
@@ -1684,8 +1704,21 @@ app.post('/api/studio/jobs', async (req, res) => {
           pollinations: {
             needsKey: false,
             call: async (promptText: string) => {
-              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}`;
-              return url;
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&referrer=joelos`;
+              const headers: Record<string, string> = {};
+              if (process.env.POLLINATIONS_TOKEN) {
+                headers['Authorization'] = `Bearer ${process.env.POLLINATIONS_TOKEN}`;
+              }
+              
+              const res = await fetch(url, { headers });
+              if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`Pollinations API failed with status ${res.status}: ${text}`);
+              }
+              
+              const arrayBuffer = await res.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              return `data:image/jpeg;base64,${buffer.toString('base64')}`;
             }
           }
         };
