@@ -51,7 +51,9 @@ import {
   Image,
   FileUp,
   Pause,
-  Eye
+  Eye,
+  Compass,
+  Radar
 } from 'lucide-react';
 import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarHeader, SidebarFooter, SidebarTrigger } from '../components/ui/sidebar';
 import { ModelHub } from './components/ModelHub';
@@ -548,7 +550,10 @@ export default function App() {
   });
 
   // Ops sub-tab selector inside Operations Panel
-  const [opsSubTab, setOpsSubTab] = useState<'kanban' | 'orchestration' | 'sandbox' | 'studio'>('kanban');
+  const [opsSubTab, setOpsSubTab] = useState<'kanban' | 'orchestration' | 'sandbox' | 'studio' | 'radial'>('kanban');
+  const [activeRadialAgentId, setActiveRadialAgentId] = useState<AgentId>('cortana');
+  const [radialStallThreshold, setRadialStallThreshold] = useState<number>(15);
+  const [nodeLastChanged, setNodeLastChanged] = useState<Record<string, number | string>>({});
 
   // 1. Orchestration States (Hermes)
   const [hermesCrons, setHermesCrons] = useState<any[]>([]);
@@ -1295,6 +1300,25 @@ export default function App() {
     { id: 'titan', label: 'Titan (Strategy)', status: 'pending' },
     { id: 'synthesis', label: 'Final deliverable', status: 'pending' },
   ]);
+
+  useEffect(() => {
+    const now = Date.now();
+    setNodeLastChanged(prev => {
+      const updated = { ...prev };
+      let changed = false;
+      pipelineNodes.forEach(node => {
+        const prevStatusKey = `${node.id}_status`;
+        const hasNoPrev = prev[node.id] === undefined;
+        const prevStatus = prev[prevStatusKey];
+        if (hasNoPrev || prevStatus !== node.status) {
+          updated[node.id] = now;
+          updated[prevStatusKey] = node.status;
+          changed = true;
+        }
+      });
+      return changed ? updated : prev;
+    });
+  }, [pipelineNodes]);
 
   function clearHistory() {
     if (window.confirm('Are you sure you want to clear conversation logs?')) {
@@ -3462,6 +3486,7 @@ export default function App() {
               {opsSubTab === 'orchestration' && 'HERMES AGENT ENGINE GATEWAY & TASK SCHEDULER'}
               {opsSubTab === 'sandbox' && 'WEBCONTAINER LIVE STATIC DEPLOY PREVIEWS'}
               {opsSubTab === 'studio' && 'GEMINI IMAGEN & SYNTHETIC MULTIMEDIA STUDIO'}
+              {opsSubTab === 'radial' && 'MISSION CONTROL SYSTEM INTEGRITY & COGNITIVE RADIAL MONITOR'}
             </p>
           </div>
 
@@ -3471,7 +3496,8 @@ export default function App() {
               { id: 'kanban', label: 'KANBAN BOARD', icon: <Trello size={12} /> },
               { id: 'orchestration', label: 'HERMES', icon: <Cpu size={12} /> },
               { id: 'sandbox', label: 'SANDBOXES', icon: <ExternalLink size={12} /> },
-              { id: 'studio', label: 'STUDIO', icon: <Sparkles size={12} /> }
+              { id: 'studio', label: 'STUDIO', icon: <Sparkles size={12} /> },
+              { id: 'radial', label: 'MISSION CONTROL', icon: <Compass size={12} /> }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -4238,6 +4264,409 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* 5. MISSION CONTROL RADIAL VIEW */}
+        {opsSubTab === 'radial' && (() => {
+          // Identify the 7 core pipeline nodes that correspond to our agents
+          const coreAgentIds: AgentId[] = ['cortana', 'jarvis', 'aura', 'boss', 'cash', 'forge', 'titan'];
+          
+          const selectedAgentProfile = agents.find(a => a.id === activeRadialAgentId);
+          const selectedPipelineNode = pipelineNodes.find(n => n.id === activeRadialAgentId);
+          
+          // Latest activities for the selected agent
+          const matchingLogs = activityFeed.filter(log => {
+            if (!selectedAgentProfile) return false;
+            const nameMatch = log.agentName.toLowerCase() === selectedAgentProfile.name.toLowerCase() ||
+                              log.agentName.toLowerCase() === activeRadialAgentId.toLowerCase() ||
+                              (activeRadialAgentId === 'boss' && log.agentName.toLowerCase() === 'friday') ||
+                              (activeRadialAgentId === 'forge' && log.agentName.toLowerCase() === 'nova');
+            return nameMatch;
+          });
+
+          // Filter tasks from opsTasks
+          const matchingTasks = opsTasks.filter(task => {
+            return task.agentSource.toLowerCase() === activeRadialAgentId.toLowerCase() ||
+                   (activeRadialAgentId === 'boss' && task.agentSource.toLowerCase() === 'friday') ||
+                   (activeRadialAgentId === 'forge' && task.agentSource.toLowerCase() === 'nova');
+          });
+
+          return (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 animate-in fade-in duration-300">
+              {/* Radial Graph Panel */}
+              <div className="xl:col-span-2 p-5 rounded-2xl border border-emerald-950/80 bg-[#020503] flex flex-col justify-between shadow-2xl relative overflow-hidden min-h-[600px]">
+                {/* Visual grid backdrop */}
+                <div className="absolute inset-0 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:16px_16px] opacity-10 pointer-events-none" />
+                
+                {/* Header controls inside panel */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-emerald-950/60 pb-4 z-10">
+                  <div>
+                    <h3 className="font-display font-black text-sm text-white flex items-center gap-2">
+                      <Radar size={16} className="text-emerald-400" />
+                      COGNITIVE ORBIT OVERVIEW
+                    </h3>
+                    <p className="text-[10px] text-emerald-500/70 font-mono mt-0.5">REAL-TIME AGENT INTERSECTION LOGIC</p>
+                  </div>
+                  
+                  {/* Threshold & Status Display */}
+                  <div className="flex flex-wrap items-center gap-4 bg-black/60 p-2.5 rounded-xl border border-emerald-950/60">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono text-emerald-500/60 font-bold block uppercase tracking-wider">STALL THRESHOLD:</span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="range"
+                          min="3"
+                          max="30"
+                          value={radialStallThreshold}
+                          onChange={(e) => setRadialStallThreshold(Number(e.target.value))}
+                          className="w-20 accent-emerald-500 h-1 bg-emerald-950 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 w-6 text-right">{radialStallThreshold}s</span>
+                      </div>
+                    </div>
+                    
+                    <div className="h-4 w-px bg-emerald-950" />
+                    
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono text-emerald-500/60 font-bold block uppercase tracking-wider">STATUS:</span>
+                      <span className={`text-[9px] font-mono font-black px-1.5 py-0.5 rounded uppercase ${
+                        pipelineIsRunning ? 'bg-[#00ff66]/10 text-[#00ff66] border border-[#00ff66]/20 animate-pulse' : 'bg-zinc-950 text-zinc-500 border border-zinc-800'
+                      }`}>
+                        {pipelineIsRunning ? 'PIPELINE ACTIVE' : 'PIPELINE IDLE'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* The Radial Stage */}
+                <div className="flex-1 w-full h-[420px] relative mt-4 flex items-center justify-center select-none z-10">
+                  {/* SVG background connections */}
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+                    {coreAgentIds.map((nodeId, idx) => {
+                      const angleRad = (idx * 2 * Math.PI) / coreAgentIds.length - Math.PI / 2;
+                      const x1 = '50%';
+                      const y1 = '50%';
+                      
+                      // Match coordinates with HTML circles
+                      const x2 = `calc(50% + ${Math.cos(angleRad) * 140}px)`;
+                      const y2 = `calc(50% + ${Math.sin(angleRad) * 140}px)`;
+                      
+                      const pNode = pipelineNodes.find(n => n.id === nodeId);
+                      const isNodeActive = pNode?.status === 'active';
+                      const isNodeCompleted = pNode?.status === 'completed';
+                      const isNodeError = pNode?.status === 'error';
+                      
+                      // Calculate if stalled
+                      const lastChangedTime = typeof nodeLastChanged[nodeId] === 'number' ? (nodeLastChanged[nodeId] as number) : Date.now();
+                      const elapsed = (Date.now() - lastChangedTime) / 1000;
+                      const isStalled = pipelineIsRunning && isNodeActive && elapsed > radialStallThreshold;
+                      
+                      let strokeColor = 'rgba(16, 185, 129, 0.15)';
+                      let dashArray = '3,3';
+                      
+                      if (isStalled) {
+                        strokeColor = 'rgba(239, 68, 68, 0.4)';
+                        dashArray = '5,2';
+                      } else if (isNodeActive) {
+                        strokeColor = 'rgba(0, 255, 102, 0.7)';
+                        dashArray = '0';
+                      } else if (isNodeCompleted) {
+                        strokeColor = 'rgba(16, 185, 129, 0.4)';
+                        dashArray = '0';
+                      } else if (isNodeError) {
+                        strokeColor = 'rgba(244, 63, 94, 0.5)';
+                        dashArray = '0';
+                      }
+                      
+                      return (
+                        <g key={`line-${nodeId}`}>
+                          {/* Pulsing glow layer for active lines */}
+                          {isNodeActive && !isStalled && (
+                            <line
+                              x1={x1}
+                              y1={y1}
+                              x2={x2}
+                              y2={y2}
+                              stroke="rgba(0, 255, 102, 0.3)"
+                              strokeWidth="4"
+                              className="animate-pulse"
+                            />
+                          )}
+                          <line
+                            x1={x1}
+                            y1={y1}
+                            x2={x2}
+                            y2={y2}
+                            stroke={strokeColor}
+                            strokeWidth={isNodeActive ? '2' : '1'}
+                            strokeDasharray={dashArray}
+                          />
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Orbit concentric circles */}
+                  <div className="absolute w-[280px] h-[280px] rounded-full border border-emerald-950/40 pointer-events-none" />
+                  <div className="absolute w-[180px] h-[180px] rounded-full border border-emerald-950/20 pointer-events-none" />
+
+                  {/* Central Hub Core */}
+                  <div className="absolute left-[50%] top-[50%] -translate-x-[50%] -translate-y-[50%] w-24 h-24 rounded-full bg-[#020503] border-2 border-emerald-900 flex flex-col justify-center items-center z-20 shadow-[0_0_20px_rgba(16,185,129,0.15)] group hover:border-[#00ff66] hover:shadow-[0_0_25px_rgba(0,255,102,0.3)] transition-all duration-300">
+                    <div className={`absolute inset-1 rounded-full border border-dashed border-emerald-800/40 ${pipelineIsRunning ? 'animate-spin' : ''}`} />
+                    <Brain className={`h-8 w-8 ${pipelineIsRunning ? 'text-[#00ff66] drop-shadow-[0_0_6px_#00ff66] animate-pulse' : 'text-emerald-700'}`} />
+                    <span className="text-[7px] font-mono font-black text-emerald-500 uppercase tracking-widest mt-1.5">CORE ENGINE</span>
+                    <span className="text-[6px] font-mono text-emerald-600 font-extrabold uppercase mt-0.5">{pipelineIsRunning ? 'ROUTING' : 'READY'}</span>
+                  </div>
+
+                  {/* 7 Orbiting Agent Nodes */}
+                  {coreAgentIds.map((nodeId, idx) => {
+                    const angleRad = (idx * 2 * Math.PI) / coreAgentIds.length - Math.PI / 2;
+                    const x = 50 + Math.cos(angleRad) * 35; // Position in %
+                    const y = 50 + Math.sin(angleRad) * 35; // Position in %
+                    
+                    const agent = agents.find(a => a.id === nodeId);
+                    const pNode = pipelineNodes.find(n => n.id === nodeId);
+                    const isNodeActive = pNode?.status === 'active';
+                    const isNodeCompleted = pNode?.status === 'completed';
+                    const isNodeError = pNode?.status === 'error';
+                    const isNodeSkipped = pNode?.status === 'skipped';
+                    
+                    // Stall calculations
+                    const lastChangedTime = typeof nodeLastChanged[nodeId] === 'number' ? (nodeLastChanged[nodeId] as number) : Date.now();
+                    const elapsed = (Date.now() - lastChangedTime) / 1000;
+                    const isStalled = pipelineIsRunning && isNodeActive && elapsed > radialStallThreshold;
+                    
+                    const isSelected = activeRadialAgentId === nodeId;
+                    
+                    // State borders & glows
+                    let nodeBorder = 'border-emerald-950 hover:border-emerald-600';
+                    let nodeGlow = '';
+                    let statusLabel = 'IDLE';
+                    
+                    if (isStalled) {
+                      nodeBorder = 'border-rose-500 animate-pulse';
+                      nodeGlow = 'shadow-[0_0_15px_rgba(244,63,94,0.6)] bg-rose-950/20';
+                      statusLabel = 'STALLED';
+                    } else if (isNodeActive) {
+                      nodeBorder = 'border-[#00ff66] ring-2 ring-[#00ff66]/30';
+                      nodeGlow = 'shadow-[0_0_18px_rgba(0,255,102,0.5)] bg-emerald-900/10';
+                      statusLabel = 'RUNNING';
+                    } else if (isNodeCompleted) {
+                      nodeBorder = 'border-emerald-500';
+                      nodeGlow = 'shadow-[0_0_10px_rgba(16,185,129,0.3)] bg-emerald-950/30';
+                      statusLabel = 'DONE';
+                    } else if (isNodeError) {
+                      nodeBorder = 'border-rose-600';
+                      nodeGlow = 'shadow-[0_0_12px_rgba(239,68,68,0.4)] bg-rose-950/20';
+                      statusLabel = 'ERROR';
+                    } else if (isNodeSkipped) {
+                      nodeBorder = 'border-slate-800';
+                      nodeGlow = 'bg-slate-900/40 opacity-40';
+                      statusLabel = 'SKIPPED';
+                    }
+                    
+                    if (isSelected) {
+                      nodeBorder += ' ring-4 ring-emerald-400/50 scale-105 z-30';
+                    }
+                    
+                    return (
+                      <div
+                        key={nodeId}
+                        style={{
+                          left: `${x}%`,
+                          top: `${y}%`,
+                          transform: 'translate(-50%, -50%)',
+                          position: 'absolute'
+                        }}
+                        onClick={() => setActiveRadialAgentId(nodeId)}
+                        className={`w-14 h-14 rounded-full border-2 cursor-pointer transition-all duration-300 flex items-center justify-center bg-[#020503] ${nodeBorder} ${nodeGlow}`}
+                      >
+                        {/* Agent Icon / Avatar */}
+                        {agent?.icon ? (
+                          <img
+                            src={agent.icon}
+                            alt={agent.name}
+                            referrerPolicy="no-referrer"
+                            className={`w-11 h-11 rounded-full object-cover select-none ${isNodeSkipped ? 'grayscale' : ''}`}
+                          />
+                        ) : (
+                          <div className="w-11 h-11 rounded-full bg-emerald-950/50 flex items-center justify-center text-emerald-400 font-mono font-black text-xs">
+                            {agent?.name ? agent.name[0] : nodeId[0].toUpperCase()}
+                          </div>
+                        )}
+                        
+                        {/* Status Dot / Stall Alarm Badge */}
+                        <span className={`absolute -top-1 -right-1 px-1 py-0.5 rounded text-[7px] font-mono font-black tracking-wider shadow border uppercase ${
+                          isStalled ? 'bg-rose-600 text-white border-rose-400 animate-pulse' :
+                          isNodeActive ? 'bg-[#00ff66] text-[#020503] border-[#00ff66]' :
+                          isNodeCompleted ? 'bg-emerald-600 text-white border-emerald-400' :
+                          isNodeError ? 'bg-rose-500 text-white border-rose-400' :
+                          isNodeSkipped ? 'bg-slate-800 text-slate-400 border-slate-700' :
+                          'bg-emerald-950 text-emerald-500 border-emerald-900'
+                        }`}>
+                          {statusLabel}
+                        </span>
+
+                        {/* Name label at bottom of node */}
+                        <span className="absolute top-15 left-[50%] -translate-x-[50%] text-[8px] font-mono font-black text-slate-400 uppercase tracking-widest whitespace-nowrap bg-black/80 px-1.5 py-0.5 rounded border border-emerald-950/60 max-w-[90px] truncate">
+                          {agent?.name || nodeId}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {/* Stall detection system log banner */}
+                <div className="p-3.5 rounded-xl border border-emerald-950 bg-black/40 text-[10px] text-emerald-600 font-mono leading-relaxed space-y-1.5 z-10 mt-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span className="font-bold text-emerald-400 uppercase">SYSTEM DIAGNOSTIC OVERWATCH ENABLED</span>
+                  </div>
+                  <span>
+                    Stall detection is active. If any pipeline node stays in <strong className="text-emerald-400">RUNNING</strong> status for longer than {radialStallThreshold} seconds without progressing or triggering a complete signal, it will trigger an automatic <strong className="text-rose-400">STALL ALERT</strong>, dimming the node connection and sounding internal telemetry flags.
+                  </span>
+                </div>
+              </div>
+
+              {/* Inspector Side Panel */}
+              <div className="xl:col-span-1 space-y-4">
+                {selectedAgentProfile ? (
+                  <div className="p-5 rounded-2xl border border-emerald-900 bg-[#020503] space-y-5 shadow-2xl relative">
+                    {/* Header profile */}
+                    <div className="flex items-center gap-4 pb-4 border-b border-emerald-950/60">
+                      {selectedAgentProfile.icon ? (
+                        <img
+                          src={selectedAgentProfile.icon}
+                          alt={selectedAgentProfile.name}
+                          referrerPolicy="no-referrer"
+                          className="w-16 h-16 rounded-xl object-cover border-2 border-emerald-950 shadow-lg shrink-0"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 rounded-xl bg-emerald-950 flex items-center justify-center text-[#00ff66] font-mono font-black text-lg shrink-0 border-2 border-emerald-900">
+                          {selectedAgentProfile.name[0]}
+                        </div>
+                      )}
+                      
+                      <div className="space-y-1 overflow-hidden">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-display font-black text-base text-white truncate">{selectedAgentProfile.name}</h4>
+                          <span className={`text-[8px] font-mono font-black px-1.5 py-0.5 rounded border ${selectedAgentProfile.enabled !== false ? 'bg-emerald-950 text-[#00ff66] border-emerald-800' : 'bg-rose-950 text-rose-400 border-rose-900'}`}>
+                            {selectedAgentProfile.enabled !== false ? 'READY' : 'DISABLED'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono lowercase truncate">{selectedAgentProfile.model}</p>
+                        <p className="text-[9px] text-emerald-500/70 font-mono uppercase tracking-wider">SECURE SYST_ID: {activeRadialAgentId.toUpperCase()}</p>
+                      </div>
+                    </div>
+
+                    {/* Agent Mission Details */}
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-mono text-emerald-500/60 font-bold block uppercase tracking-wider">COGNITIVE DIRECTIVE & PURPOSE</span>
+                      <p className="text-xs text-slate-300 leading-relaxed font-sans">{selectedAgentProfile.description}</p>
+                    </div>
+
+                    {/* Dynamic Pipeline Node telemetry */}
+                    <div className="p-3.5 rounded-xl border border-emerald-950 bg-black/60 space-y-3">
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="font-bold text-slate-400 uppercase">PIPELINE NODE RUN STATE</span>
+                        <span className={`font-black uppercase ${
+                          selectedPipelineNode?.status === 'active' ? 'text-amber-400 animate-pulse' :
+                          selectedPipelineNode?.status === 'completed' ? 'text-emerald-400' :
+                          selectedPipelineNode?.status === 'error' ? 'text-rose-500' : 'text-slate-500'
+                        }`}>
+                          {selectedPipelineNode?.status || 'PENDING'}
+                        </span>
+                      </div>
+                      
+                      {/* Interactive Emulation Sandbox for Manual Verification */}
+                      <div className="space-y-2 pt-2 border-t border-emerald-950/40">
+                        <span className="text-[9px] font-mono text-emerald-500/50 font-bold block uppercase tracking-wider">EMULATED LIFE-CYCLE ACTIONS:</span>
+                        
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setPipelineNodes(nodes => nodes.map(n => n.id === activeRadialAgentId ? { ...n, status: 'active' } : n));
+                              setPipelineIsRunning(true);
+                              addActivity(selectedAgentProfile.name, selectedAgentProfile.color || '#10b981', `Manual emulation initiated: node state set to active.`);
+                            }}
+                            className="flex-1 py-1.5 px-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-mono font-bold transition-all cursor-pointer text-center"
+                          >
+                            RUN EMULATION
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              setPipelineNodes(nodes => nodes.map(n => n.id === activeRadialAgentId ? { ...n, status: 'completed' } : n));
+                              addActivity(selectedAgentProfile.name, selectedAgentProfile.color || '#10b981', `Manual emulation resolved: node state set to completed.`);
+                            }}
+                            className="flex-1 py-1.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[9px] font-mono font-bold transition-all cursor-pointer text-center"
+                          >
+                            RESOLVE EMULATION
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Assigned Ops Tasks */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-emerald-950/60 pb-1.5">
+                        <span className="text-[9px] font-mono text-emerald-500/60 font-bold uppercase tracking-wider">Active Workspace Tasks</span>
+                        <span className="text-[10px] text-slate-500 font-mono">{matchingTasks.length} assigned</span>
+                      </div>
+                      
+                      <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                        {matchingTasks.length === 0 ? (
+                          <div className="p-3 text-center border border-dashed border-emerald-950/60 text-slate-600 text-[10px] font-mono rounded-lg">
+                            NO JOBS ASSIGNED IN THE CURRENT WORKSPACE
+                          </div>
+                        ) : (
+                          matchingTasks.map(task => (
+                            <div key={task.id} className="p-2.5 rounded bg-black/40 border border-emerald-950/50 space-y-1 text-[10px] font-mono">
+                              <div className="flex items-center justify-between text-slate-200">
+                                <span className="font-bold uppercase text-emerald-400">{task.title}</span>
+                                <span className={`text-[8px] font-black uppercase px-1 rounded ${
+                                  task.status === 'done' ? 'bg-emerald-950 text-[#00ff66]' : 'bg-amber-950 text-amber-400'
+                                }`}>
+                                  {task.status}
+                                </span>
+                              </div>
+                              <p className="text-slate-400 text-[9px] leading-relaxed line-clamp-2">{task.detail}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Agent Activity logs */}
+                    <div className="space-y-2.5 pt-1.5">
+                      <span className="text-[9px] font-mono text-emerald-500/60 font-bold block uppercase tracking-wider">RECENT COGNITIVE TELEMETRY FEED</span>
+                      <div className="p-3 rounded-lg bg-black border border-emerald-950 h-36 overflow-y-auto text-[9px] text-emerald-300 font-mono leading-normal space-y-2 scrollbar-thin">
+                        {matchingLogs.length === 0 ? (
+                          <div className="p-6 text-center text-slate-600">
+                            NO LOGS FOUND FOR THIS COGNITIVE INSTANCE
+                          </div>
+                        ) : (
+                          matchingLogs.map((log) => (
+                            <div key={log.id} className="space-y-0.5 border-b border-emerald-950/40 pb-1.5 last:border-0 last:pb-0">
+                              <div className="flex justify-between items-center text-[8px] text-slate-500">
+                                <span className="font-bold text-emerald-500">{log.agentName}</span>
+                                <span>{log.timestamp}</span>
+                              </div>
+                              <p className="text-slate-300 leading-relaxed font-sans">{log.action}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-10 text-center border border-dashed border-emerald-950 text-slate-600 text-xs font-mono rounded-xl">
+                    SELECT AN AGENT TO INSPECT COGNITIVE SINAPSIS
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
