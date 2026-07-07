@@ -472,7 +472,7 @@ app.post('/api/chat', async (req, res) => {
         apiKey = 'local-hermes-key';
       }
       
-      const hermesUrl = process.env.HERMES_GATEWAY_URL || 'http://localhost:8080';
+      const hermesUrl = process.env.HERMES_GATEWAY_URL || 'http://localhost:8642';
       const baseUrl = engine === 'hermes'
         ? `${hermesUrl}/v1/chat/completions`
         : (engine === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions');
@@ -1432,7 +1432,7 @@ interface StudioJob {
   timestamp: string;
 }
 
-const HERMES_GATEWAY_URL = process.env.HERMES_GATEWAY_URL || 'http://localhost:8080';
+const HERMES_GATEWAY_URL = process.env.HERMES_GATEWAY_URL || 'http://localhost:8642';
 
 let hermesCrons: HermesCron[] = [
   { id: 'cron-1', name: 'Database Sync', schedule: '0 0 * * *', task: 'Backup SQLite and sync vectors', status: 'active', createdAt: new Date().toISOString() },
@@ -1530,12 +1530,17 @@ let studioJobs: StudioJob[] = [
 // Helper to call Hermes Gateway
 async function callHermesGateway(endpoint: string, options: any = {}) {
   const url = `${HERMES_GATEWAY_URL}${endpoint}`;
+  const token = process.env.HERMES_API_TOKEN;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const res = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
+    headers
   });
   if (!res.ok) {
     throw new Error(`Hermes Gateway returned status ${res.status}`);
@@ -1548,9 +1553,9 @@ async function callHermesGateway(endpoint: string, options: any = {}) {
 app.get('/api/hermes/cron', async (req, res) => {
   try {
     const data = await callHermesGateway('/cron');
-    return res.json(data);
+    return res.json({ connected: true, crons: data });
   } catch (err) {
-    return res.json(hermesCrons);
+    return res.json({ connected: false, crons: hermesCrons });
   }
 });
 
@@ -1608,9 +1613,9 @@ app.delete('/api/hermes/cron/:id', async (req, res) => {
 app.get('/api/hermes/subagents', async (req, res) => {
   try {
     const data = await callHermesGateway('/sessions');
-    return res.json(data);
+    return res.json({ connected: true, subagents: data });
   } catch (err) {
-    return res.json(hermesSubagents);
+    return res.json({ connected: false, subagents: hermesSubagents });
   }
 });
 
@@ -1894,7 +1899,7 @@ app.post('/api/studio/jobs', async (req, res) => {
         job.status = 'processing';
         
         // Define Image Providers
-        const imageProviders: Record<string, { needsKey: boolean, call: (prompt: string, key?: string) => Promise<string> }> = {
+        const imageProviders: Record<string, { needsKey: boolean, call: (prompt: string, key?: string, requestedModel?: string) => Promise<string> }> = {
           nanoBanana: {
             needsKey: true,
             call: async (promptText: string, key?: string) => {
@@ -1957,8 +1962,13 @@ app.post('/api/studio/jobs', async (req, res) => {
           },
           pollinations: {
             needsKey: false,
-            call: async (promptText: string) => {
-              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&referrer=joelos`;
+            call: async (promptText: string, key?: string, requestedModel?: string) => {
+              let modelQuery = '';
+              if (requestedModel && requestedModel.startsWith('pollinations-')) {
+                const subModel = requestedModel.substring('pollinations-'.length);
+                modelQuery = `?model=${subModel}`;
+              }
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}${modelQuery ? modelQuery + '&' : '?'}nologo=true&referrer=joelos`;
               const headers: Record<string, string> = {};
               if (process.env.POLLINATIONS_TOKEN) {
                 headers['Authorization'] = `Bearer ${process.env.POLLINATIONS_TOKEN}`;
@@ -1985,13 +1995,34 @@ app.post('/api/studio/jobs', async (req, res) => {
               const mimeType = contentType || 'image/jpeg';
               return `data:${mimeType};base64,${buffer.toString('base64')}`;
             }
+          },
+          'openai-codex': {
+            needsKey: false,
+            call: async (promptText: string) => {
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?model=flux-realism&nologo=true&referrer=joelos`;
+              const res = await fetch(url);
+              if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`OpenAI Codex Proxy failed with status ${res.status}: ${text}`);
+              }
+              const contentType = res.headers.get('content-type') || '';
+              const arrayBuffer = await res.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              if (buffer.length === 0) {
+                throw new Error('OpenAI Codex Proxy returned an empty image buffer.');
+              }
+              const mimeType = contentType || 'image/jpeg';
+              return `data:${mimeType};base64,${buffer.toString('base64')}`;
+            }
           }
         };
 
         // If the user selected a model that indicates pollinations, or we use nanoBanana by default
         let selectedProvider = 'nanoBanana';
-        if (req.body.model === 'pollinations') {
+        if (req.body.model === 'pollinations' || req.body.model?.startsWith('pollinations-')) {
            selectedProvider = 'pollinations';
+        } else if (req.body.model === 'openai-codex') {
+           selectedProvider = 'openai-codex';
         }
 
         let provider = imageProviders[selectedProvider];
@@ -2000,8 +2031,18 @@ app.post('/api/studio/jobs', async (req, res) => {
         }
 
         try {
-           job.resultUrl = await provider.call(prompt, providerKey);
-           job.provider = selectedProvider === 'pollinations' ? 'Pollinations.ai' : 'Google Gemini (generateContent)';
+           job.resultUrl = await provider.call(prompt, providerKey, req.body.model);
+           let providerDisplayName = 'Google Gemini (generateContent)';
+           if (selectedProvider === 'pollinations') {
+              if (req.body.model?.startsWith('pollinations-')) {
+                providerDisplayName = `Pollinations.ai (${req.body.model.substring('pollinations-'.length).toUpperCase()})`;
+              } else {
+                providerDisplayName = 'Pollinations.ai (FLUX)';
+              }
+           } else if (selectedProvider === 'openai-codex') {
+              providerDisplayName = 'OpenAI Codex (gpt-image-2)';
+           }
+           job.provider = providerDisplayName;
            job.status = 'completed';
         } catch (err: any) {
            console.error(`${selectedProvider} failed:`, err);

@@ -91,3 +91,20 @@ export interface KpiMetric {
   sparkData?: number[];
 }
 
+export interface Goal {
+  id: string;
+  title: string;
+  description: string;
+  linkedAgent: AgentId;
+  status: 'pending' | 'in-progress' | 'completed' | 'failed';
+  createdAt: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  date: string;
+  author: string;
+  content: string;
+}
+
+

@@ -53,13 +53,15 @@ import {
   Pause,
   Eye,
   Compass,
-  Radar
+  Radar,
+  Target,
+  Mic
 } from 'lucide-react';
 import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarHeader, SidebarFooter, SidebarTrigger } from '../components/ui/sidebar';
 import { ModelHub } from './components/ModelHub';
 import { MailIntegration } from './components/MailIntegration';
 import { VoiceWaveVisualizer } from './components/VoiceWaveVisualizer';
-import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus } from './types';
+import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus, Goal, JournalEntry } from './types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
 import Markdown from 'react-markdown';
@@ -473,7 +475,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   
-  type Tab = 'command-center' | 'pipeline' | 'operations' | 'agents' | 'mail' | 'settings';
+  type Tab = 'command-center' | 'pipeline' | 'operations' | 'agents' | 'mail' | 'settings' | 'journal';
   const [activeTab, setActiveTab] = useState<Tab>('command-center');
 
   // Command Center KPI metrics state
@@ -539,6 +541,111 @@ export default function App() {
     localStorage.setItem('joelos_activity_feed', JSON.stringify(activityFeed));
   }, [activityFeed]);
 
+  // Goals state
+  const [goals, setGoals] = useState<Goal[]>(() => {
+    const saved = localStorage.getItem('joelos_goals');
+    if (saved) return JSON.parse(saved);
+    return [
+      { id: 'g1', title: 'Orchestration Health', description: 'Ensure the Hermes API connection remains stable with standard fallback triggers', linkedAgent: 'cortana', status: 'in-progress', createdAt: new Date().toISOString() },
+      { id: 'g2', title: 'Synchronize Agent Memory', description: 'Maintain complete context alignments across core and subagent databases', linkedAgent: 'jarvis', status: 'pending', createdAt: new Date().toISOString() },
+    ];
+  });
+
+  // Goals persistence
+  useEffect(() => {
+    localStorage.setItem('joelos_goals', JSON.stringify(goals));
+  }, [goals]);
+
+  // Form states for Goal creation
+  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [newGoalDesc, setNewGoalDesc] = useState('');
+  const [newGoalAgent, setNewGoalAgent] = useState<AgentId>('cortana');
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+
+  // Journal and Manual Entry State
+  const [journal, setJournal] = useState<JournalEntry[]>(() => {
+    const saved = localStorage.getItem('joelos_journal');
+    if (saved) return JSON.parse(saved);
+    return [
+      { id: 'j1', date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(), author: 'SYSTEM', content: 'JoelOS Kernel initialized. Collaborative agent environment active.' }
+    ];
+  });
+
+  // Journal persistence
+  useEffect(() => {
+    localStorage.setItem('joelos_journal', JSON.stringify(journal));
+  }, [journal]);
+
+  // Form states for manual journal entry
+  const [newJournalContent, setNewJournalContent] = useState('');
+  const [newJournalAuthor, setNewJournalAuthor] = useState('USER');
+
+  // Voice Input Speech Recognition States
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(true);
+
+  // Check Web Speech API support
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Web Speech API is not supported in this browser. Please use Chrome/Edge/Safari.");
+      return;
+    }
+
+    if (isListening) {
+      const existingRec = (window as any).activeRecognition;
+      if (existingRec) {
+        existingRec.stop();
+      }
+      setIsListening(false);
+    } else {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          (window as any).activeRecognition = recognition;
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error("Speech recognition error:", event.error);
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+          (window as any).activeRecognition = null;
+        };
+
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          if (transcript) {
+            if (chatTab === 'private') {
+              setPrivatePrompt(prev => prev + (prev ? ' ' : '') + transcript);
+            } else {
+              setGlobalPrompt(prev => prev + (prev ? ' ' : '') + transcript);
+            }
+          }
+        };
+
+        recognition.start();
+      } catch (err) {
+        console.error("Failed to start speech recognition:", err);
+        setIsListening(false);
+      }
+    }
+  };
+
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isMemorySearching, setIsMemorySearching] = useState<boolean>(false);
   const [memorySearchQuery, setMemorySearchQuery] = useState<string>('');
@@ -556,6 +663,7 @@ export default function App() {
   const [nodeLastChanged, setNodeLastChanged] = useState<Record<string, number | string>>({});
 
   // 1. Orchestration States (Hermes)
+  const [hermesConnected, setHermesConnected] = useState<boolean>(false);
   const [hermesCrons, setHermesCrons] = useState<any[]>([]);
   const [hermesSubagents, setHermesSubagents] = useState<any[]>([]);
   const [newCronName, setNewCronName] = useState('');
@@ -589,10 +697,25 @@ export default function App() {
     const fetchData = async () => {
       try {
         const cronRes = await fetch('/api/hermes/cron');
-        if (cronRes.ok && active) setHermesCrons(await cronRes.json());
+        if (cronRes.ok && active) {
+          const payload = await cronRes.json();
+          if (payload && typeof payload === 'object' && 'connected' in payload) {
+            setHermesConnected(payload.connected);
+            setHermesCrons(payload.crons);
+          } else {
+            setHermesCrons(payload);
+          }
+        }
 
         const subRes = await fetch('/api/hermes/subagents');
-        if (subRes.ok && active) setHermesSubagents(await subRes.json());
+        if (subRes.ok && active) {
+          const payload = await subRes.json();
+          if (payload && typeof payload === 'object' && 'connected' in payload) {
+            setHermesSubagents(payload.subagents);
+          } else {
+            setHermesSubagents(payload);
+          }
+        }
 
         const sandboxRes = await fetch('/api/sandbox/projects');
         if (sandboxRes.ok && active) {
@@ -628,6 +751,40 @@ export default function App() {
       setEditedCode('');
     }
   }, [activeSandboxProjId]);
+
+  const handleCreateGoal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGoalTitle.trim() || !newGoalDesc.trim()) return;
+    const goal: Goal = {
+      id: 'g-' + Date.now(),
+      title: newGoalTitle,
+      description: newGoalDesc,
+      linkedAgent: newGoalAgent,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+    setGoals(prev => [goal, ...prev]);
+    setNewGoalTitle('');
+    setNewGoalDesc('');
+    setNewGoalAgent('cortana');
+    setIsGoalModalOpen(false);
+  };
+
+  const handleDeleteGoal = (id: string) => {
+    if (window.confirm('Are you sure you want to delete this goal?')) {
+      setGoals(prev => prev.filter(g => g.id !== id));
+    }
+  };
+
+  const handleToggleGoalStatus = (id: string) => {
+    const statusCycle: Record<Goal['status'], Goal['status']> = {
+      'pending': 'in-progress',
+      'in-progress': 'completed',
+      'completed': 'failed',
+      'failed': 'pending'
+    };
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, status: statusCycle[g.status] } : g));
+  };
 
   const handleCreateCron = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1856,6 +2013,18 @@ export default function App() {
     ].slice(0, 50));
   };
 
+  const addJournalEntry = (author: string, content: string) => {
+    setJournal(prev => [
+      {
+        id: 'j-' + Date.now() + Math.random().toString(36).substring(2, 5),
+        date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
+        author: author.toUpperCase(),
+        content: content
+      },
+      ...prev
+    ]);
+  };
+
   // Stop current active pipeline
   const stopPipelineOrchestration = () => {
     pipelineAbortedRef.current = true;
@@ -3022,6 +3191,7 @@ export default function App() {
 
       setPipelineNodes(nodes => nodes.map(n => n.id === 'output' ? { ...n, status: 'completed' } : n));
       addActivity('System', '#10b981', 'Entire collaborative pipeline executed successfully.');
+      addJournalEntry('SYSTEM', `Collaborative Pipeline executed successfully for target query: "${targetQuery}". New software specifications generated.`);
       
       // Save timing data point to history state and local storage
       const newTimingData = {
@@ -3233,6 +3403,7 @@ export default function App() {
       createdAt: new Date().toLocaleTimeString(),
     };
     setOpsTasks(prev => [...prev, task]);
+    addJournalEntry('SYSTEM', `Task created: "${task.title}" (Priority: ${task.priority.toUpperCase()}) linked to ${task.agentSource}.`);
     setNewTaskTitle('');
     setNewTaskDetail('');
   };
@@ -3245,7 +3416,11 @@ export default function App() {
         let nextIdx = currIdx;
         if (dir === 'prev' && currIdx > 0) nextIdx = currIdx - 1;
         if (dir === 'next' && currIdx < statuses.length - 1) nextIdx = currIdx + 1;
-        return { ...task, status: statuses[nextIdx] };
+        const nextStatus = statuses[nextIdx];
+        if (nextStatus === 'done' && task.status !== 'done') {
+          addJournalEntry('SYSTEM', `Task completed: "${task.title}" (Linked Agent: ${task.agentSource})`);
+        }
+        return { ...task, status: nextStatus };
       }
       return task;
     }));
@@ -3268,6 +3443,9 @@ export default function App() {
     const id = e.dataTransfer.getData('text/plain');
     setOpsTasks(prev => prev.map(task => {
       if (task.id === id) {
+        if (targetStatus === 'done' && task.status !== 'done') {
+          addJournalEntry('SYSTEM', `Task completed: "${task.title}" (Linked Agent: ${task.agentSource})`);
+        }
         return { ...task, status: targetStatus };
       }
       return task;
@@ -3431,33 +3609,293 @@ export default function App() {
             </div>
           </div>
 
-          <div className="space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-widest text-emerald-500 font-extrabold flex items-center gap-2">
-              <History size={11} />
-              <span>LIVE ACTIVITY LOG</span>
-            </h3>
-            <div className={`border border-emerald-950/60 rounded-xl p-4 ${theme === 'oled' ? 'bg-[#000000]' : 'bg-[#050c08]'} flex flex-col h-[500px]`}>
-              <div className="flex-1 overflow-y-auto pr-1 space-y-3.5 custom-scrollbar">
-                {activityFeed.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center text-emerald-800 font-mono text-xs p-6">
-                    <History size={24} className="opacity-30 mb-2" />
-                    <span>System idling.<br />No orchestration activities recorded.</span>
-                  </div>
-                ) : (
-                  activityFeed.slice(0, 20).map((act) => (
-                    <div key={act.id} className="flex gap-2.5 items-start text-[11px] leading-relaxed border-b border-emerald-950/35 pb-2.5">
-                      <span className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: act.agentColor || '#10b981', boxShadow: `0 0 6px ${act.agentColor || '#10b981'}` }} />
-                      <div className="flex-1 space-y-0.5">
-                        <div className="flex justify-between items-baseline gap-2 font-mono">
-                          <span className="font-bold text-slate-200 text-[10px]" style={{ color: act.agentColor || '#10b981' }}>[{act.agentName}]</span>
-                          <span className="text-[8px] text-slate-600 shrink-0">{act.timestamp}</span>
-                        </div>
-                        <p className="text-slate-300 text-[10px] font-sans leading-normal">{act.action}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
+          <div className="space-y-4">
+            {/* GOALS TRACKER */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <h3 className="font-mono text-[10px] uppercase tracking-widest text-emerald-500 font-extrabold flex items-center gap-2">
+                  <Target size={11} className="text-emerald-400" />
+                  <span>GOALS & OBJECTIVES</span>
+                </h3>
+                <button
+                  onClick={() => setIsGoalModalOpen(!isGoalModalOpen)}
+                  className="text-[9px] font-mono font-bold text-[#00ff66] bg-emerald-950/40 hover:bg-emerald-950/80 border border-emerald-900/60 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                >
+                  {isGoalModalOpen ? 'CANCEL' : '+ ADD GOAL'}
+                </button>
               </div>
+
+              {isGoalModalOpen && (
+                <form onSubmit={handleCreateGoal} className="p-3.5 rounded-xl border border-emerald-900/40 bg-black/80 space-y-2.5 font-mono text-xs shadow-xl">
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">GOAL TITLE</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Launch Beta Site..."
+                      value={newGoalTitle}
+                      onChange={(e) => setNewGoalTitle(e.target.value)}
+                      className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-1.5 text-slate-100 placeholder-emerald-900/50 focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">DESCRIPTION</label>
+                    <textarea
+                      required
+                      placeholder="Describe target deliverables..."
+                      value={newGoalDesc}
+                      onChange={(e) => setNewGoalDesc(e.target.value)}
+                      className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-1.5 text-slate-100 placeholder-emerald-900/50 h-14 focus:outline-none font-sans"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">LINKED AGENT</label>
+                    <select
+                      value={newGoalAgent}
+                      onChange={(e) => setNewGoalAgent(e.target.value as AgentId)}
+                      className="w-full text-xs rounded bg-black border border-emerald-950 px-2 py-1.5 text-slate-300 focus:outline-none"
+                    >
+                      {agents.map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-1.5 bg-[#00ff66]/10 hover:bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/30 rounded text-[10px] font-bold tracking-wider transition-colors cursor-pointer"
+                  >
+                    REGISTER SYSTEM GOAL
+                  </button>
+                </form>
+              )}
+
+              <div className={`border border-emerald-950/60 rounded-xl p-3 ${theme === 'oled' ? 'bg-[#000000]' : 'bg-[#050c08]'} flex flex-col h-[260px]`}>
+                <div className="flex-1 overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
+                  {goals.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-emerald-800 font-mono text-[10px] leading-relaxed">
+                      <span>No active system goals.<br />Create one to guide intelligence alignment.</span>
+                    </div>
+                  ) : (
+                    goals.map((g) => {
+                      const linkedAgentObj = agents.find(a => a.id === g.linkedAgent);
+                      let statusColor = 'text-slate-400 border-slate-900 bg-slate-950/20';
+                      if (g.status === 'in-progress') statusColor = 'text-blue-400 border-blue-900 bg-blue-950/20';
+                      else if (g.status === 'completed') statusColor = 'text-[#00ff66] border-emerald-900/50 bg-[#00ff66]/10';
+                      else if (g.status === 'failed') statusColor = 'text-rose-400 border-rose-950 bg-rose-950/20';
+
+                      return (
+                        <div key={g.id} className="p-2.5 rounded-lg border border-emerald-950/40 bg-[#020503] space-y-1.5 font-mono text-xs">
+                          <div className="flex justify-between items-start gap-2">
+                            <span className="font-bold text-slate-100 text-[11px] truncate" title={g.title}>{g.title}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handleToggleGoalStatus(g.id)}
+                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded border uppercase cursor-pointer select-none transition-colors ${statusColor}`}
+                                title="Click to cycle status"
+                              >
+                                {g.status}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteGoal(g.id)}
+                                className="text-emerald-700 hover:text-rose-400 transition-colors cursor-pointer"
+                                title="Delete Goal"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-sans leading-normal">{g.description}</p>
+                          <div className="flex justify-between items-center text-[8px] text-emerald-500/80 pt-1 border-t border-emerald-950/20">
+                            <span className="flex items-center gap-1">
+                              LINK: <span className="text-white">@{linkedAgentObj?.name || g.linkedAgent}</span>
+                            </span>
+                            <span>{new Date(g.createdAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* LIVE ACTIVITY LOG */}
+            <div className="space-y-3">
+              <h3 className="font-mono text-[10px] uppercase tracking-widest text-emerald-500 font-extrabold flex items-center gap-2">
+                <History size={11} className="text-emerald-400" />
+                <span>LIVE ACTIVITY LOG</span>
+              </h3>
+              <div className={`border border-emerald-950/60 rounded-xl p-4 ${theme === 'oled' ? 'bg-[#000000]' : 'bg-[#050c08]'} flex flex-col h-[210px]`}>
+                <div className="flex-1 overflow-y-auto pr-1 space-y-3.5 custom-scrollbar">
+                  {activityFeed.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-emerald-800 font-mono text-xs p-6">
+                      <History size={24} className="opacity-30 mb-2" />
+                      <span>System idling.<br />No orchestration activities recorded.</span>
+                    </div>
+                  ) : (
+                    activityFeed.slice(0, 20).map((act) => (
+                      <div key={act.id} className="flex gap-2.5 items-start text-[11px] leading-relaxed border-b border-emerald-950/35 pb-2.5">
+                        <span className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: act.agentColor || '#10b981', boxShadow: `0 0 6px ${act.agentColor || '#10b981'}` }} />
+                        <div className="flex-1 space-y-0.5">
+                          <div className="flex justify-between items-baseline gap-2 font-mono">
+                            <span className="font-bold text-slate-200 text-[10px]" style={{ color: act.agentColor || '#10b981' }}>[{act.agentName}]</span>
+                            <span className="text-[8px] text-slate-600 shrink-0">{act.timestamp}</span>
+                          </div>
+                          <p className="text-slate-300 text-[10px] font-sans leading-normal">{act.action}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderJournal = () => {
+    return (
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-emerald-950/40 pb-4">
+          <div>
+            <h2 className="font-display font-black text-2xl text-white tracking-tight">JoelOS SYSTEM JOURNAL</h2>
+            <p className="text-emerald-500/60 text-xs font-mono uppercase tracking-wider mt-1">HISTORICAL PERSISTENCE OF AGENT INTELLIGENCE LOGS & MANIFESTS</p>
+          </div>
+          <div className="flex items-center gap-2 bg-[#020503] border border-emerald-950 px-3 py-1.5 rounded-xl font-mono text-[10px] text-emerald-400">
+            <BookOpen size={12} className="text-emerald-400" />
+            <span>ENTRIES REGISTERED: {journal.length}</span>
+          </div>
+        </div>
+
+        {/* Dashboard Split Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Form & Stats */}
+          <div className="space-y-6">
+            {/* MANUAL JOURNAL ENTRY FORM */}
+            <div className="p-5 rounded-xl border border-emerald-900/60 bg-[#050c08] space-y-4">
+              <div>
+                <h3 className="font-mono text-xs uppercase tracking-widest text-emerald-400 font-extrabold flex items-center gap-2">
+                  <Plus size={14} />
+                  <span>REGISTER JOURNAL EVENT</span>
+                </h3>
+                <p className="text-[10px] text-emerald-600 mt-1 uppercase font-mono">APPEND MANUAL ENTRY TO THE KERNEL JOURNAL</p>
+              </div>
+
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!newJournalContent.trim()) return;
+                addJournalEntry(newJournalAuthor, newJournalContent);
+                setNewJournalContent('');
+              }} className="space-y-3 font-mono text-xs">
+                <div className="space-y-1">
+                  <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">AUTHOR IDENTITY</label>
+                  <select
+                    value={newJournalAuthor}
+                    onChange={(e) => setNewJournalAuthor(e.target.value)}
+                    className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-2 text-slate-100 focus:outline-none"
+                  >
+                    <option value="USER">USER (DEFAULT)</option>
+                    <option value="SYSTEM">SYSTEM KERNEL</option>
+                    <option value="CORTANA">CORTANA ENGINE</option>
+                    <option value="JARVIS">JARVIS ENGINE</option>
+                    <option value="ATHENA">ATHENA MEMORY</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">EVENT CONTENT</label>
+                  <textarea
+                    required
+                    placeholder="Enter manual system logs, breakthroughs, or event records..."
+                    value={newJournalContent}
+                    onChange={(e) => setNewJournalContent(e.target.value)}
+                    className="w-full text-xs rounded bg-black border border-emerald-950 px-3 py-2 text-slate-100 placeholder-emerald-900/50 h-32 focus:outline-none font-sans leading-relaxed"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2 bg-[#00ff66]/10 hover:bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/30 rounded text-xs font-bold tracking-wider transition-colors cursor-pointer"
+                >
+                  COMMIT TO SYSTEM JOURNAL
+                </button>
+              </form>
+            </div>
+
+            {/* QUICK STATS */}
+            <div className="p-4 rounded-xl border border-emerald-950 bg-[#020503] space-y-3">
+              <h4 className="font-mono text-[10px] text-emerald-500 font-bold uppercase tracking-wider">SYSTEM INTEGRITY INDEX</h4>
+              <div className="space-y-2 text-xs font-mono text-slate-300">
+                <div className="flex justify-between border-b border-emerald-950/50 pb-1.5">
+                  <span>Persistence Provider:</span>
+                  <span className="text-[#00ff66]">localStorage</span>
+                </div>
+                <div className="flex justify-between border-b border-emerald-950/50 pb-1.5">
+                  <span>Audit Status:</span>
+                  <span className="text-emerald-400">VERIFIED</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Total System Logs:</span>
+                  <span className="text-white">{journal.length} entries</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Journal List */}
+          <div className="lg:col-span-2 space-y-3">
+            <h3 className="font-mono text-[10px] uppercase tracking-widest text-emerald-500 font-extrabold flex items-center gap-2">
+              <BookOpen size={11} className="text-emerald-400" />
+              <span>JOURNAL HISTORY & MEMORANDA</span>
+            </h3>
+
+            <div className="space-y-3 max-h-[550px] overflow-y-auto pr-2 custom-scrollbar">
+              {journal.length === 0 ? (
+                <div className="border border-emerald-950/60 rounded-xl p-8 text-center text-emerald-800 font-mono text-xs bg-[#050c08]/50">
+                  <BookOpen size={32} className="opacity-30 mb-2 mx-auto" />
+                  <span>The system journal is entirely empty.</span>
+                </div>
+              ) : (
+                journal.map((entry) => {
+                  let authorBadge = "bg-blue-950/50 text-blue-400 border-blue-900/60";
+                  if (entry.author === "SYSTEM") authorBadge = "bg-emerald-950/50 text-emerald-400 border-emerald-900/60";
+                  else if (entry.author === "CORTANA") authorBadge = "bg-purple-950/50 text-purple-400 border-purple-900/60";
+                  else if (entry.author === "JARVIS") authorBadge = "bg-indigo-950/50 text-indigo-400 border-indigo-900/60";
+                  else if (entry.author === "ATHENA") authorBadge = "bg-amber-950/50 text-amber-400 border-amber-900/60";
+
+                  return (
+                    <div
+                      key={entry.id}
+                      className="p-4 rounded-xl border border-emerald-950/80 bg-[#020503] hover:border-emerald-500/40 transition-colors space-y-2.5 relative group shadow-md"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 font-mono">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${authorBadge}`}>
+                            {entry.author}
+                          </span>
+                          <span className="text-[10px] text-slate-500">{entry.date}</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (window.confirm('Remove this entry from system journal?')) {
+                              setJournal(prev => prev.filter(item => item.id !== entry.id));
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
+                          title="Remove Entry"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+
+                      <p className="text-slate-200 text-xs leading-relaxed font-sans whitespace-pre-wrap">{entry.content}</p>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -3732,7 +4170,20 @@ export default function App() {
 
               {/* Scheduled Jobs List */}
               <div className="space-y-3">
-                <h4 className="font-mono text-[9px] text-emerald-500 font-extrabold uppercase tracking-widest">ACTIVE CRON LOGS</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-mono text-[9px] text-emerald-500 font-extrabold uppercase tracking-widest">ACTIVE CRON LOGS</h4>
+                  {hermesConnected ? (
+                    <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-900/60 flex items-center gap-1.5 shadow-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00ff66] animate-pulse" />
+                      Hermes: connected
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-mono font-bold text-amber-500 bg-amber-950/30 px-2 py-0.5 rounded-full border border-amber-950/60 flex items-center gap-1.5 shadow-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      Hermes: disconnected (using local fallback)
+                    </span>
+                  )}
+                </div>
                 <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                   {hermesCrons.length === 0 ? (
                     <div className="p-6 text-center border border-dashed border-emerald-950 text-slate-600 text-xs font-mono rounded-xl">
@@ -3740,13 +4191,20 @@ export default function App() {
                     </div>
                   ) : (
                     hermesCrons.map((cron) => (
-                      <div key={cron.id} className="p-3.5 rounded-xl border border-emerald-900 bg-[#030704] flex items-start justify-between gap-4 font-mono text-xs">
+                      <div key={cron.id} className={`p-3.5 rounded-xl border bg-[#030704] flex items-start justify-between gap-4 font-mono text-xs transition-colors ${
+                        hermesConnected ? 'border-emerald-900' : 'border-amber-950/50'
+                      }`}>
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-100">{cron.name}</span>
                             <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border uppercase ${
                               cron.status === 'active' ? 'bg-[#00ff66]/10 border-emerald-500/50 text-[#00ff66]' : 'bg-amber-500/10 border-amber-950 text-amber-500'
                             }`}>{cron.status}</span>
+                            {!hermesConnected && (
+                              <span className="text-[7px] font-mono font-black text-amber-500/80 uppercase px-1.5 py-0.5 bg-amber-500/5 rounded border border-amber-950/40">
+                                Mock Fallback
+                              </span>
+                            )}
                           </div>
                           <div className="text-[9px] text-[#00ff66] font-extrabold tracking-widest uppercase">
                             Freq: <span className="text-white">{cron.schedule}</span>
@@ -4110,7 +4568,14 @@ export default function App() {
                       className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                     >
                       <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
-                      <option value="pollinations">Pollinations.ai (Free - No Key Required)</option>
+                      <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
+                      <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
+                      <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
+                      <option value="pollinations-flux-anime">Pollinations.ai (FLUX Anime - Free)</option>
+                      <option value="pollinations-flux-3d">Pollinations.ai (FLUX 3D CGI - Free)</option>
+                      <option value="pollinations-flux-coyo">Pollinations.ai (FLUX Coyo Art - Free)</option>
+                      <option value="pollinations-turbo">Pollinations.ai (SDXL Turbo - Free Fast)</option>
+                      <option value="pollinations-any-dark">Pollinations.ai (Any Dark Moody - Free)</option>
                     </select>
                   </div>
 
@@ -4309,6 +4774,22 @@ export default function App() {
                   
                   {/* Threshold & Status Display */}
                   <div className="flex flex-wrap items-center gap-4 bg-black/60 p-2.5 rounded-xl border border-emerald-950/60">
+                    <div className="flex items-center gap-1.5 text-[9px] font-mono font-bold">
+                      {hermesConnected ? (
+                        <span className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/60 flex items-center gap-1 shadow-sm">
+                          <span className="w-1 h-1 rounded-full bg-[#00ff66] animate-pulse" />
+                          HERMES: CONNECTED
+                        </span>
+                      ) : (
+                        <span className="text-amber-500 bg-amber-950/30 px-2 py-0.5 rounded border border-amber-950/60 flex items-center gap-1 shadow-sm">
+                          <span className="w-1 h-1 rounded-full bg-amber-500" />
+                          HERMES: OFFLINE
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="h-4 w-px bg-emerald-950" />
+
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] font-mono text-emerald-500/60 font-bold block uppercase tracking-wider">STALL THRESHOLD:</span>
                       <div className="flex items-center gap-1.5">
@@ -5215,6 +5696,7 @@ export default function App() {
             { id: 'operations', label: 'OPERATIONS', icon: <Trello size={14} /> },
             { id: 'agents', label: 'AGENTS', icon: <Bot size={14} /> },
             { id: 'mail', label: 'MAIL', icon: <Mail size={14} /> },
+            { id: 'journal', label: 'JOURNAL', icon: <BookOpen size={14} /> },
             { id: 'settings', label: 'SETTINGS', icon: <Settings size={14} /> }
           ].map((item) => {
             const isActive = activeTab === item.id;
@@ -5810,6 +6292,17 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex flex-col gap-2 shrink-0">
+                    <button
+                      onClick={toggleListening}
+                      className={`h-11 w-11 rounded-xl transition-all cursor-pointer flex items-center justify-center border ${
+                        isListening
+                          ? 'bg-rose-950/40 border-rose-500 text-rose-400 animate-pulse'
+                          : 'bg-emerald-950/20 border-emerald-900/60 text-emerald-500 hover:text-[#00ff66] hover:border-emerald-500/40 hover:bg-[#10b981]/10'
+                      }`}
+                      title={isListening ? "Listening... Click to stop" : "Voice input dictation"}
+                    >
+                      <Mic size={14} className={isListening ? "animate-bounce" : ""} />
+                    </button>
                     {chatTab === 'private' ? (
                       privateIsSending ? (
                         <button
@@ -6282,6 +6775,8 @@ export default function App() {
             renderOperations()
           ) : activeTab === 'agents' ? (
             renderAgentsGrid()
+          ) : activeTab === 'journal' ? (
+            renderJournal()
           ) : activeTab === 'mail' ? (
             /* MAIL INTEGRATION TAB */
             <div className="flex-1 overflow-hidden">
