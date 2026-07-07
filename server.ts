@@ -5,6 +5,8 @@ import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import chokidar from 'chokidar';
 import os from 'os';
+import { spawn } from 'child_process';
+import http from 'http';
 
 // Load environment variables
 import dotenv from 'dotenv';
@@ -33,12 +35,25 @@ app.use(express.json({ limit: '10mb' }));
 
 // Initialize Google GenAI
 function getGeminiKeys(): string[] {
-  const envPath = fs.existsSync('.env') ? '.env' : '.env.example';
-  dotenv.config({ path: envPath, override: true });
+  // Only load from .env if it actually exists.
+  // Never load .env.example as it only contains blank template values and
+  // would overwrite the real environment variables passed by the container.
+  if (fs.existsSync('.env')) {
+    dotenv.config({ path: '.env', override: true });
+  }
+  
+  // Note: We deliberately do NOT perform any hardcoded prefix validation 
+  // (e.g., checking for 'AIzaSy' or 'AQ.') on the actual API key values here.
+  // Google AI Studio issues keys with various prefixes, so prefix validation
+  // is brittle. We rely on the API itself to validate the key at request time.
   const geminiKeys = Object.keys(process.env)
     .filter(k => k.startsWith('GEMINI_API_KEY') && process.env[k])
-    .map(k => process.env[k] as string);
-  return [...new Set(geminiKeys)];
+    .map(k => (process.env[k] as string).trim());
+    
+  // Basic non-empty string validation is enough.
+  const validKeys = geminiKeys.filter(k => k.length > 0);
+  
+  return [...new Set(validKeys)];
 }
 
 let ai: GoogleGenAI | null = null;
@@ -63,7 +78,12 @@ async function executeWithGeminiFallback<T>(
   operation: (client: GoogleGenAI) => Promise<T>
 ): Promise<T> {
   const currentKeys = getGeminiKeys();
-  const keysToTry = customKey ? [customKey] : currentKeys;
+  
+  // Basic validation: ensure the custom key is a non-empty string.
+  // We do not check for specific prefixes like AIzaSy here, 
+  // to support all Google AI Studio key formats (like AQ.).
+  const validCustomKey = typeof customKey === 'string' && customKey.trim().length > 0 ? customKey.trim() : undefined;
+  const keysToTry = validCustomKey ? [validCustomKey] : currentKeys;
 
   if (keysToTry.length === 0) {
     throw new Error('Gemini API client not initialized. Provide an API key in settings or backend env.');
@@ -1221,6 +1241,186 @@ interface SandboxProject {
   logs: string[];
 }
 
+const activeProcesses = new Map<string, {
+  installProc?: any;
+  devProc?: any;
+  dir: string;
+}>();
+
+function launchSandboxProject(proj: SandboxProject) {
+  if (activeProcesses.has(proj.id)) {
+    cleanupSandboxProject(proj.id);
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `joelos-sandbox-${proj.id}-`));
+  proj.logs = [`[sandbox] Registered temp workspace at: ${tempDir}`, `[sandbox] Writing virtual container files...`];
+
+  for (const [filename, content] of Object.entries(proj.files)) {
+    const filePath = path.join(tempDir, filename);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
+    proj.logs.push(`[sandbox] Created file: ${filename}`);
+  }
+
+  if (!proj.files['package.json']) {
+    const defaultPackageJson = {
+      name: proj.name,
+      private: true,
+      version: '0.0.0',
+      type: 'module',
+      scripts: {
+        dev: 'vite'
+      },
+      dependencies: {
+        react: '^19.0.1',
+        'react-dom': '^19.0.1',
+        'lucide-react': '^0.546.0'
+      },
+      devDependencies: {
+        vite: '^6.2.3'
+      }
+    };
+    fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify(defaultPackageJson, null, 2), 'utf-8');
+    proj.files['package.json'] = JSON.stringify(defaultPackageJson, null, 2);
+    proj.logs.push(`[sandbox] Generated default package.json`);
+  }
+
+  if (!proj.files['index.html']) {
+    const defaultIndexHtml = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JoelOS Sandbox - ${proj.name}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-[#020503] text-[#f1f5f9]">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>`;
+    fs.writeFileSync(path.join(tempDir, 'index.html'), defaultIndexHtml, 'utf-8');
+    proj.files['index.html'] = defaultIndexHtml;
+    proj.logs.push(`[sandbox] Generated default index.html`);
+  }
+
+  if (!proj.files['main.tsx']) {
+    const defaultMainTsx = `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.tsx';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);`;
+    fs.writeFileSync(path.join(tempDir, 'main.tsx'), defaultMainTsx, 'utf-8');
+    proj.files['main.tsx'] = defaultMainTsx;
+    proj.logs.push(`[sandbox] Generated default main.tsx`);
+  }
+
+  proj.status = 'building';
+  proj.logs.push('[sandbox] Running npm install...');
+
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const installProc = spawn(npmCmd, ['install', '--no-audit', '--no-fund'], {
+    cwd: tempDir,
+    env: { ...process.env, NODE_ENV: 'development' }
+  });
+
+  const procInfo = {
+    installProc,
+    dir: tempDir,
+    devProc: null as any
+  };
+  activeProcesses.set(proj.id, procInfo);
+
+  installProc.stdout.on('data', (data: any) => {
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        proj.logs.push(`[npm install] ${line.trim()}`);
+      }
+    }
+  });
+
+  installProc.stderr.on('data', (data: any) => {
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        proj.logs.push(`[npm install error] ${line.trim()}`);
+      }
+    }
+  });
+
+  installProc.on('close', (code: number) => {
+    if (code !== 0) {
+      proj.status = 'error';
+      proj.logs.push(`[sandbox] npm install failed with exit code ${code}`);
+      return;
+    }
+
+    proj.logs.push(`[sandbox] npm install completed. Starting dev server on port ${proj.port || 3001}...`);
+
+    const devCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    const devProc = spawn(devCmd, ['vite', '--port', String(proj.port || 3001), '--host', '0.0.0.0', '--base', `/sandbox-preview/${proj.id}/`], {
+      cwd: tempDir,
+      env: { ...process.env, NODE_ENV: 'development' }
+    });
+
+    procInfo.devProc = devProc;
+
+    devProc.stdout.on('data', (data: any) => {
+      const output = data.toString();
+      const lines = output.split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          proj.logs.push(`[dev-server] ${line.trim()}`);
+          if (line.includes('Local:') || line.includes('http://localhost') || line.includes('ready in')) {
+            proj.status = 'ready';
+          }
+        }
+      }
+    });
+
+    devProc.stderr.on('data', (data: any) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          proj.logs.push(`[dev-server error] ${line.trim()}`);
+        }
+      }
+    });
+
+    devProc.on('close', (devCode: number) => {
+      if (devCode !== null) {
+        proj.logs.push(`[sandbox] Dev server stopped with exit code ${devCode}`);
+        if (proj.status === 'ready') {
+          proj.status = 'error';
+        }
+      }
+    });
+  });
+}
+
+function cleanupSandboxProject(id: string) {
+  const procInfo = activeProcesses.get(id);
+  if (procInfo) {
+    if (procInfo.installProc) {
+      try { procInfo.installProc.kill(); } catch (e) {}
+    }
+    if (procInfo.devProc) {
+      try { procInfo.devProc.kill(); } catch (e) {}
+    }
+    try {
+      fs.rmSync(procInfo.dir, { recursive: true, force: true });
+    } catch (e) {
+      console.error(`Failed to remove sandbox temp dir ${procInfo.dir}:`, e);
+    }
+    activeProcesses.delete(id);
+  }
+}
+
 interface StudioJob {
   id: string;
   type: 'image' | 'video' | 'voice';
@@ -1566,26 +1766,20 @@ app.post('/api/sandbox/projects', (req, res) => {
     createdAt: new Date().toISOString(),
     files,
     port: 3001 + sandboxProjects.length,
-    logs: ['[sandbox] Registering workspace...', '[sandbox] Initiating virtual container filesystem...']
+    logs: ['[sandbox] Registering workspace...']
   };
 
   sandboxProjects.unshift(newProject);
 
-  setTimeout(() => {
-    const proj = sandboxProjects.find(p => p.id === id);
-    if (proj) {
-      proj.status = 'ready';
-      proj.logs.push('[sandbox] Mounting files done.');
-      proj.logs.push('[sandbox] Running dev server inside WebContainer...');
-      proj.logs.push(`[sandbox] Server running on http://localhost:${proj.port}`);
-    }
-  }, 4000);
+  // Launch real background install & dev server
+  launchSandboxProject(newProject);
 
   res.json(newProject);
 });
 
 app.delete('/api/sandbox/projects/:id', (req, res) => {
   const { id } = req.params;
+  cleanupSandboxProject(id);
   sandboxProjects = sandboxProjects.filter(p => p.id !== id);
   res.json({ success: true });
 });
@@ -1598,6 +1792,17 @@ app.put('/api/sandbox/projects/:id', (req, res) => {
     if (files) {
       proj.files = { ...proj.files, ...files };
       proj.logs.push(`[sandbox] Files updated dynamically. Triggering Hot Module Replacement...`);
+
+      // Write updated files to active workspace
+      const procInfo = activeProcesses.get(id);
+      if (procInfo) {
+        for (const [filename, content] of Object.entries(files)) {
+          const filePath = path.join(procInfo.dir, filename as string);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, content as string, 'utf-8');
+          proj.logs.push(`[sandbox] Refreshed workspace file: ${filename}`);
+        }
+      }
     }
     return res.json(proj);
   }
@@ -1615,6 +1820,49 @@ app.post('/api/sandbox/projects/:id/status', (req, res) => {
     return res.json(proj);
   }
   res.status(404).json({ error: 'Project not found' });
+});
+
+app.all('/sandbox-preview/:id*', (req, res) => {
+  const fullPath = req.path;
+  const parts = fullPath.split('/');
+  const id = parts[2];
+  if (!id) {
+    return res.status(404).send('Project ID not specified');
+  }
+
+  if (fullPath === `/sandbox-preview/${id}`) {
+    return res.redirect(`/sandbox-preview/${id}/`);
+  }
+
+  const proj = sandboxProjects.find(p => p.id === id);
+  if (!proj) {
+    return res.status(404).send('Sandbox project not found');
+  }
+
+  const targetPort = proj.port || 3001;
+  const targetPath = req.originalUrl;
+
+  const proxyReq = http.request({
+    host: '127.0.0.1',
+    port: targetPort,
+    path: targetPath,
+    method: req.method,
+    headers: {
+      ...req.headers,
+      // Ensure host header is set appropriately for the target
+      host: `127.0.0.1:${targetPort}`
+    }
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Proxy error for sandbox:', id, err.message);
+    res.status(502).send('Error communicating with sandbox dev server. It may still be starting up or has failed.');
+  });
+
+  req.pipe(proxyReq);
 });
 
 // --- STUDIO ENDPOINTS ---
@@ -1826,6 +2074,11 @@ async function setupViteOrStatic() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`JoelOS core container running on http://localhost:${PORT}`);
+    
+    // Launch default sandbox project on start
+    if (sandboxProjects.length > 0) {
+      launchSandboxProject(sandboxProjects[0]);
+    }
   });
 }
 

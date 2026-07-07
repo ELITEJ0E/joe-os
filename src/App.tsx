@@ -56,6 +56,7 @@ import {
 import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarHeader, SidebarFooter, SidebarTrigger } from '../components/ui/sidebar';
 import { ModelHub } from './components/ModelHub';
 import { MailIntegration } from './components/MailIntegration';
+import { VoiceWaveVisualizer } from './components/VoiceWaveVisualizer';
 import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus } from './types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
@@ -3993,7 +3994,8 @@ export default function App() {
                       {/* Live display simulation card */}
                       <div className="flex-1 w-full h-full relative" key={`${activeProject.id}-${sandboxReloadCount}`}>
                         <iframe
-                          srcDoc={getSandboxSrcDoc(activeProject)}
+                          src={activeProject.status === 'ready' ? `/sandbox-preview/${activeProject.id}/` : undefined}
+                          srcDoc={activeProject.status !== 'ready' ? getSandboxSrcDoc(activeProject) : undefined}
                           title={`Sandbox Preview: ${activeProject.name}`}
                           className="w-full h-full border-0 bg-[#020503]"
                           sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
@@ -4008,12 +4010,16 @@ export default function App() {
                         <button
                           onClick={(e) => { 
                             e.preventDefault(); 
-                            const win = window.open();
-                            if (win) {
-                              win.document.write(getSandboxSrcDoc(activeProject));
-                              win.document.close();
+                            if (activeProject.status === 'ready') {
+                              window.open(`/sandbox-preview/${activeProject.id}/`, '_blank');
                             } else {
-                              alert("Popup blocker prevented opening the sandbox. Please allow popups for this site.");
+                              const win = window.open();
+                              if (win) {
+                                win.document.write(getSandboxSrcDoc(activeProject));
+                                win.document.close();
+                              } else {
+                                alert("Popup blocker prevented opening the sandbox. Please allow popups for this site.");
+                              }
                             }
                           }}
                           className="text-[#00ff66] font-bold hover:underline bg-transparent border-0 cursor-pointer p-0"
@@ -4105,6 +4111,18 @@ export default function App() {
                     {isStudioSubmitting ? 'DISPATCHING GENERATOR...' : 'QUEUE SYNTHETIC JOB'}
                   </button>
                 </form>
+
+                {studioJobs.some((j) => j.type === 'voice' && j.status === 'processing') && (
+                  <div className="p-3 bg-[#0a140f] border border-emerald-500/30 rounded-lg space-y-1.5 animate-pulse mt-4">
+                    <div className="flex items-center justify-between text-[9px] font-mono font-bold text-[#00ff66]">
+                      <span className="flex items-center gap-1">🎙️ NEURAL SYNTH OVERWATCH</span>
+                      <span className="text-[8px] bg-emerald-950 px-1 py-0.5 rounded text-emerald-400 border border-emerald-900">RUNNING</span>
+                    </div>
+                    <p className="text-[9px] font-mono text-emerald-600 leading-tight">
+                      Web Audio API synthetic vocoder pipeline active. Sound carrier frequency is streaming through the real-time analyzer nodes.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* API Integration note */}
@@ -4192,10 +4210,14 @@ export default function App() {
                         )}
 
                         {job.status === 'processing' && (
-                          <div className="p-6 text-center bg-black/60 rounded-lg border border-emerald-950/60 flex flex-col items-center justify-center gap-2">
-                            <RefreshCw className="text-[#00ff66] animate-spin h-5 w-5" />
-                            <span className="text-[9px] text-[#00ff66] font-mono font-bold animate-pulse">GENERATION PIPELINE ENGAGED...</span>
-                          </div>
+                          job.type === 'voice' ? (
+                            <VoiceWaveVisualizer prompt={job.prompt} />
+                          ) : (
+                            <div className="p-6 text-center bg-black/60 rounded-lg border border-emerald-950/60 flex flex-col items-center justify-center gap-2">
+                              <RefreshCw className="text-[#00ff66] animate-spin h-5 w-5" />
+                              <span className="text-[9px] text-[#00ff66] font-mono font-bold animate-pulse">GENERATION PIPELINE ENGAGED...</span>
+                            </div>
+                          )
                         )}
 
                         {job.status === 'failed' && (
@@ -5576,6 +5598,11 @@ export default function App() {
                         <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">
                           {engine === 'gemini' ? 'Gemini API Key' : engine === 'openai' ? 'OpenAI API Key' : 'OpenRouter API Key'}
                         </label>
+                        {/* 
+                          Note: We do not perform client-side prefix validation (e.g., checking for AIzaSy)
+                          because Google AI Studio now issues keys with different formats (e.g., AQ.).
+                          The key is validated by the server when making the actual API request. 
+                        */}
                         <input
                           type="password"
                           value={cloudApiKey}
