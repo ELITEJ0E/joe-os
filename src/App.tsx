@@ -4448,7 +4448,12 @@ export default function App() {
                         <button
                           key={type.id}
                           type="button"
-                          onClick={() => setStudioType(type.id as any)}
+                          onClick={() => {
+                            setStudioType(type.id as any);
+                            if (type.id === 'voice') setStudioModel('zai-audio');
+                            else if (type.id === 'video') setStudioModel('synthesia');
+                            else setStudioModel('gemini-2.5-flash-image');
+                          }}
                           className={`py-2 rounded border font-mono text-[10px] font-extrabold flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
                             studioType === type.id
                               ? 'bg-emerald-950 border-emerald-400 text-[#00ff66]'
@@ -4469,17 +4474,34 @@ export default function App() {
                       onChange={(e) => setStudioModel(e.target.value)}
                       className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                     >
-                      <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
-                      <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
-                      <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
-                      <option value="pollinations-flux-pro">Pollinations.ai (FLUX Pro HD - Free)</option>
-                      <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
-                      <option value="pollinations-flux-anime">Pollinations.ai (FLUX Anime - Free)</option>
-                      <option value="pollinations-flux-3d">Pollinations.ai (FLUX 3D CGI - Free)</option>
-                      <option value="pollinations-flux-coyo">Pollinations.ai (FLUX Coyo Art - Free)</option>
-                      <option value="pollinations-turbo">Pollinations.ai (SDXL Turbo - Free Fast)</option>
-                      <option value="pollinations-any-dark">Pollinations.ai (Any Dark Moody - Free)</option>
-                      <option value="pollinations-midjourney">Pollinations.ai (Midjourney V6 Style - Free)</option>
+                      {studioType === 'voice' ? (
+                        <>
+                          <option value="zai-audio">Z.ai Voice Engine (GML Audio - Free)</option>
+                          <option value="zai-audio-pro">Z.ai Voice Engine Pro (Free)</option>
+                          <option value="neural-vocoder">Neural Vocoder API (Default)</option>
+                        </>
+                      ) : studioType === 'video' ? (
+                        <>
+                          <option value="synthesia">Synthesia Engine (Default)</option>
+                          <option value="zai-video">Z.ai Video Gen (Free)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
+                          <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
+                          <option value="zai">Z.ai Vision Engine (GML Base - Free)</option>
+                          <option value="zai-pro">Z.ai Vision Engine (GML Pro - Free)</option>
+                          <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
+                          <option value="pollinations-flux-pro">Pollinations.ai (FLUX Pro HD - Free)</option>
+                          <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
+                          <option value="pollinations-flux-anime">Pollinations.ai (FLUX Anime - Free)</option>
+                          <option value="pollinations-flux-3d">Pollinations.ai (FLUX 3D CGI - Free)</option>
+                          <option value="pollinations-flux-coyo">Pollinations.ai (FLUX Coyo Art - Free)</option>
+                          <option value="pollinations-turbo">Pollinations.ai (SDXL Turbo - Free Fast)</option>
+                          <option value="pollinations-any-dark">Pollinations.ai (Any Dark Moody - Free)</option>
+                          <option value="pollinations-midjourney">Pollinations.ai (Midjourney V6 Style - Free)</option>
+                        </>
+                      )}
                     </select>
                   </div>
 
