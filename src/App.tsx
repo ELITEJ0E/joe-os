@@ -61,7 +61,8 @@ import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupCon
 import { ModelHub } from './components/ModelHub';
 import { MailIntegration } from './components/MailIntegration';
 import { VoiceWaveVisualizer } from './components/VoiceWaveVisualizer';
-import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus, Goal, JournalEntry } from './types';
+import InteractiveImageBentoGallery from '../components/ui/bento-gallery';
+import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus, Goal } from './types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
 import Markdown from 'react-markdown';
@@ -475,7 +476,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   
-  type Tab = 'command-center' | 'pipeline' | 'operations' | 'agents' | 'mail' | 'settings' | 'journal';
+  type Tab = 'command-center' | 'pipeline' | 'operations' | 'agents' | 'mail' | 'settings';
   const [activeTab, setActiveTab] = useState<Tab>('command-center');
 
   // Command Center KPI metrics state
@@ -561,24 +562,6 @@ export default function App() {
   const [newGoalDesc, setNewGoalDesc] = useState('');
   const [newGoalAgent, setNewGoalAgent] = useState<AgentId>('cortana');
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
-
-  // Journal and Manual Entry State
-  const [journal, setJournal] = useState<JournalEntry[]>(() => {
-    const saved = localStorage.getItem('joelos_journal');
-    if (saved) return JSON.parse(saved);
-    return [
-      { id: 'j1', date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(), author: 'SYSTEM', content: 'JoelOS Kernel initialized. Collaborative agent environment active.' }
-    ];
-  });
-
-  // Journal persistence
-  useEffect(() => {
-    localStorage.setItem('joelos_journal', JSON.stringify(journal));
-  }, [journal]);
-
-  // Form states for manual journal entry
-  const [newJournalContent, setNewJournalContent] = useState('');
-  const [newJournalAuthor, setNewJournalAuthor] = useState('USER');
 
   // Voice Input Speech Recognition States
   const [isListening, setIsListening] = useState(false);
@@ -687,8 +670,36 @@ export default function App() {
   const [studioPrompt, setStudioPrompt] = useState('');
   const [studioModel, setStudioModel] = useState('gemini-2.5-flash-image');
   const [studioType, setStudioType] = useState<'image' | 'video' | 'voice'>('image');
+  const [studioAspectRatio, setStudioAspectRatio] = useState<string>('1:1');
   const [isStudioSubmitting, setIsStudioSubmitting] = useState(false);
   const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
+  const [selectedStudioJob, setSelectedStudioJob] = useState<any | null>(null);
+
+  const completedImageJobs = useMemo(() => {
+    return studioJobs
+      .filter((j: any) => j.type === 'image' && j.status === 'completed' && j.resultUrl)
+      .map((job: any, index: number) => {
+        const spans = [
+          "md:col-span-2 md:row-span-2",
+          "md:col-span-1 md:row-span-1",
+          "md:col-span-1 md:row-span-2",
+          "md:col-span-2 md:row-span-1",
+          "md:col-span-1 md:row-span-1",
+          "md:col-span-2 md:row-span-1",
+        ];
+        return {
+          id: job.id,
+          title: job.prompt.length > 30 ? job.prompt.slice(0, 30) + '...' : job.prompt,
+          desc: job.prompt,
+          url: job.resultUrl,
+          span: spans[index % spans.length],
+          prompt: job.prompt,
+          model: job.provider,
+          aspectRatio: job.aspectRatio || '1:1',
+          timestamp: new Date(job.timestamp).toLocaleString()
+        };
+      });
+  }, [studioJobs]);
 
   // Periodic API synchronization
   useEffect(() => {
@@ -879,7 +890,13 @@ export default function App() {
       const res = await fetch('/api/studio/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: studioType, prompt: studioPrompt, model: studioModel, providerKey: cloudApiKey })
+        body: JSON.stringify({ 
+          type: studioType, 
+          prompt: studioPrompt, 
+          model: studioModel, 
+          aspectRatio: studioAspectRatio, 
+          providerKey: cloudApiKey 
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -2013,16 +2030,27 @@ export default function App() {
     ].slice(0, 50));
   };
 
-  const addJournalEntry = (author: string, content: string) => {
-    setJournal(prev => [
-      {
-        id: 'j-' + Date.now() + Math.random().toString(36).substring(2, 5),
-        date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
-        author: author.toUpperCase(),
-        content: content
-      },
-      ...prev
-    ]);
+  const logEventToAthena = (title: string, summary: string, snippet: string, tags: string[]) => {
+    const memoryEmbedding = getLocalEmbeddingVector(summary);
+    const newMemoryItem: MemoryItem = {
+      id: 'mem-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+      title: title,
+      summary: summary,
+      snippet: snippet,
+      tags: tags,
+      embedding: memoryEmbedding,
+      timestamp: new Date().toLocaleString(),
+    };
+
+    setMemories(prev => {
+      const updated = [newMemoryItem, ...prev];
+      fetch('/api/memory', {
+        method: 'POST',
+        body: JSON.stringify({ items: updated }),
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(err => console.error('Error auto-writing log to Athena memory:', err));
+      return updated;
+    });
   };
 
   // Stop current active pipeline
@@ -3191,7 +3219,12 @@ export default function App() {
 
       setPipelineNodes(nodes => nodes.map(n => n.id === 'output' ? { ...n, status: 'completed' } : n));
       addActivity('System', '#10b981', 'Entire collaborative pipeline executed successfully.');
-      addJournalEntry('SYSTEM', `Collaborative Pipeline executed successfully for target query: "${targetQuery}". New software specifications generated.`);
+      logEventToAthena(
+        `Pipeline Completed: ${targetQuery.length > 30 ? targetQuery.substring(0, 28) + '...' : targetQuery}`,
+        `Collaborative Pipeline executed successfully for target query: "${targetQuery}". New software specifications generated.`,
+        `Query: ${targetQuery}\nEngine: ${engine}\nTime: ${new Date().toLocaleTimeString()}`,
+        ['pipeline-success', 'system-log']
+      );
       
       // Save timing data point to history state and local storage
       const newTimingData = {
@@ -3403,7 +3436,12 @@ export default function App() {
       createdAt: new Date().toLocaleTimeString(),
     };
     setOpsTasks(prev => [...prev, task]);
-    addJournalEntry('SYSTEM', `Task created: "${task.title}" (Priority: ${task.priority.toUpperCase()}) linked to ${task.agentSource}.`);
+    logEventToAthena(
+      `Task Created: ${task.title}`,
+      `A new operations task "${task.title}" was created with priority ${task.priority.toUpperCase()} linked to agent ${task.agentSource}.`,
+      `Detail: ${task.detail || 'None'}\nPriority: ${task.priority}\nLinked Agent: ${task.agentSource}`,
+      ['task-created', 'ops', task.agentSource.toLowerCase()]
+    );
     setNewTaskTitle('');
     setNewTaskDetail('');
   };
@@ -3418,7 +3456,12 @@ export default function App() {
         if (dir === 'next' && currIdx < statuses.length - 1) nextIdx = currIdx + 1;
         const nextStatus = statuses[nextIdx];
         if (nextStatus === 'done' && task.status !== 'done') {
-          addJournalEntry('SYSTEM', `Task completed: "${task.title}" (Linked Agent: ${task.agentSource})`);
+          logEventToAthena(
+            `Task Completed: ${task.title}`,
+            `Operations task "${task.title}" linked to agent ${task.agentSource} has been moved to DONE status.`,
+            `Task: ${task.title}\nLinked Agent: ${task.agentSource}`,
+            ['task-completed', 'ops', task.agentSource.toLowerCase()]
+          );
         }
         return { ...task, status: nextStatus };
       }
@@ -3444,7 +3487,12 @@ export default function App() {
     setOpsTasks(prev => prev.map(task => {
       if (task.id === id) {
         if (targetStatus === 'done' && task.status !== 'done') {
-          addJournalEntry('SYSTEM', `Task completed: "${task.title}" (Linked Agent: ${task.agentSource})`);
+          logEventToAthena(
+            `Task Completed: ${task.title}`,
+            `Operations task "${task.title}" linked to agent ${task.agentSource} has been moved to DONE status.`,
+            `Task: ${task.title}\nLinked Agent: ${task.agentSource}`,
+            ['task-completed', 'ops', task.agentSource.toLowerCase()]
+          );
         }
         return { ...task, status: targetStatus };
       }
@@ -3755,153 +3803,7 @@ export default function App() {
     );
   };
 
-  const renderJournal = () => {
-    return (
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-emerald-950/40 pb-4">
-          <div>
-            <h2 className="font-display font-black text-2xl text-white tracking-tight">JoelOS SYSTEM JOURNAL</h2>
-            <p className="text-emerald-500/60 text-xs font-mono uppercase tracking-wider mt-1">HISTORICAL PERSISTENCE OF AGENT INTELLIGENCE LOGS & MANIFESTS</p>
-          </div>
-          <div className="flex items-center gap-2 bg-[#020503] border border-emerald-950 px-3 py-1.5 rounded-xl font-mono text-[10px] text-emerald-400">
-            <BookOpen size={12} className="text-emerald-400" />
-            <span>ENTRIES REGISTERED: {journal.length}</span>
-          </div>
-        </div>
 
-        {/* Dashboard Split Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Form & Stats */}
-          <div className="space-y-6">
-            {/* MANUAL JOURNAL ENTRY FORM */}
-            <div className="p-5 rounded-xl border border-emerald-900/60 bg-[#050c08] space-y-4">
-              <div>
-                <h3 className="font-mono text-xs uppercase tracking-widest text-emerald-400 font-extrabold flex items-center gap-2">
-                  <Plus size={14} />
-                  <span>REGISTER JOURNAL EVENT</span>
-                </h3>
-                <p className="text-[10px] text-emerald-600 mt-1 uppercase font-mono">APPEND MANUAL ENTRY TO THE KERNEL JOURNAL</p>
-              </div>
-
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                if (!newJournalContent.trim()) return;
-                addJournalEntry(newJournalAuthor, newJournalContent);
-                setNewJournalContent('');
-              }} className="space-y-3 font-mono text-xs">
-                <div className="space-y-1">
-                  <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">AUTHOR IDENTITY</label>
-                  <select
-                    value={newJournalAuthor}
-                    onChange={(e) => setNewJournalAuthor(e.target.value)}
-                    className="w-full text-xs rounded bg-black border border-emerald-950 px-2.5 py-2 text-slate-100 focus:outline-none"
-                  >
-                    <option value="USER">USER (DEFAULT)</option>
-                    <option value="SYSTEM">SYSTEM KERNEL</option>
-                    <option value="CORTANA">CORTANA ENGINE</option>
-                    <option value="JARVIS">JARVIS ENGINE</option>
-                    <option value="ATHENA">ATHENA MEMORY</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] text-emerald-500 font-bold block uppercase tracking-wider">EVENT CONTENT</label>
-                  <textarea
-                    required
-                    placeholder="Enter manual system logs, breakthroughs, or event records..."
-                    value={newJournalContent}
-                    onChange={(e) => setNewJournalContent(e.target.value)}
-                    className="w-full text-xs rounded bg-black border border-emerald-950 px-3 py-2 text-slate-100 placeholder-emerald-900/50 h-32 focus:outline-none font-sans leading-relaxed"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-2 bg-[#00ff66]/10 hover:bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/30 rounded text-xs font-bold tracking-wider transition-colors cursor-pointer"
-                >
-                  COMMIT TO SYSTEM JOURNAL
-                </button>
-              </form>
-            </div>
-
-            {/* QUICK STATS */}
-            <div className="p-4 rounded-xl border border-emerald-950 bg-[#020503] space-y-3">
-              <h4 className="font-mono text-[10px] text-emerald-500 font-bold uppercase tracking-wider">SYSTEM INTEGRITY INDEX</h4>
-              <div className="space-y-2 text-xs font-mono text-slate-300">
-                <div className="flex justify-between border-b border-emerald-950/50 pb-1.5">
-                  <span>Persistence Provider:</span>
-                  <span className="text-[#00ff66]">localStorage</span>
-                </div>
-                <div className="flex justify-between border-b border-emerald-950/50 pb-1.5">
-                  <span>Audit Status:</span>
-                  <span className="text-emerald-400">VERIFIED</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Total System Logs:</span>
-                  <span className="text-white">{journal.length} entries</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column - Journal List */}
-          <div className="lg:col-span-2 space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-widest text-emerald-500 font-extrabold flex items-center gap-2">
-              <BookOpen size={11} className="text-emerald-400" />
-              <span>JOURNAL HISTORY & MEMORANDA</span>
-            </h3>
-
-            <div className="space-y-3 max-h-[550px] overflow-y-auto pr-2 custom-scrollbar">
-              {journal.length === 0 ? (
-                <div className="border border-emerald-950/60 rounded-xl p-8 text-center text-emerald-800 font-mono text-xs bg-[#050c08]/50">
-                  <BookOpen size={32} className="opacity-30 mb-2 mx-auto" />
-                  <span>The system journal is entirely empty.</span>
-                </div>
-              ) : (
-                journal.map((entry) => {
-                  let authorBadge = "bg-blue-950/50 text-blue-400 border-blue-900/60";
-                  if (entry.author === "SYSTEM") authorBadge = "bg-emerald-950/50 text-emerald-400 border-emerald-900/60";
-                  else if (entry.author === "CORTANA") authorBadge = "bg-purple-950/50 text-purple-400 border-purple-900/60";
-                  else if (entry.author === "JARVIS") authorBadge = "bg-indigo-950/50 text-indigo-400 border-indigo-900/60";
-                  else if (entry.author === "ATHENA") authorBadge = "bg-amber-950/50 text-amber-400 border-amber-900/60";
-
-                  return (
-                    <div
-                      key={entry.id}
-                      className="p-4 rounded-xl border border-emerald-950/80 bg-[#020503] hover:border-emerald-500/40 transition-colors space-y-2.5 relative group shadow-md"
-                    >
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2 font-mono">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${authorBadge}`}>
-                            {entry.author}
-                          </span>
-                          <span className="text-[10px] text-slate-500">{entry.date}</span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (window.confirm('Remove this entry from system journal?')) {
-                              setJournal(prev => prev.filter(item => item.id !== entry.id));
-                            }
-                          }}
-                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
-                          title="Remove Entry"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-
-                      <p className="text-slate-200 text-xs leading-relaxed font-sans whitespace-pre-wrap">{entry.content}</p>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   const renderOperations = () => {
     const columns: { status: TaskStatus; label: string; border: string; bg: string; text: string }[] = [
@@ -4570,14 +4472,47 @@ export default function App() {
                       <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
                       <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
                       <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
+                      <option value="pollinations-flux-pro">Pollinations.ai (FLUX Pro HD - Free)</option>
                       <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
                       <option value="pollinations-flux-anime">Pollinations.ai (FLUX Anime - Free)</option>
                       <option value="pollinations-flux-3d">Pollinations.ai (FLUX 3D CGI - Free)</option>
                       <option value="pollinations-flux-coyo">Pollinations.ai (FLUX Coyo Art - Free)</option>
                       <option value="pollinations-turbo">Pollinations.ai (SDXL Turbo - Free Fast)</option>
                       <option value="pollinations-any-dark">Pollinations.ai (Any Dark Moody - Free)</option>
+                      <option value="pollinations-midjourney">Pollinations.ai (Midjourney V6 Style - Free)</option>
                     </select>
                   </div>
+
+                  {studioType === 'image' && (
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-mono text-emerald-500 block font-bold uppercase">ASPECT RATIO</label>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[
+                          { ratio: '1:1', label: '1:1', desc: 'Square' },
+                          { ratio: '16:9', label: '16:9', desc: 'Banner' },
+                          { ratio: '9:16', label: '9:16', desc: 'Mobile' },
+                          { ratio: '4:3', label: '4:3', desc: 'Classic' },
+                          { ratio: '3:4', label: '3:4', desc: 'Book' },
+                          { ratio: '3:2', label: '3:2', desc: 'Photo' },
+                          { ratio: '2:3', label: '2:3', desc: 'Poster' },
+                        ].map((item) => (
+                          <button
+                            key={item.ratio}
+                            type="button"
+                            onClick={() => setStudioAspectRatio(item.ratio)}
+                            className={`py-1 rounded border font-mono text-[9px] font-bold flex flex-col items-center justify-center cursor-pointer transition-all ${
+                              studioAspectRatio === item.ratio
+                                ? 'bg-emerald-950 border-emerald-400 text-[#00ff66]'
+                                : 'bg-black border-emerald-950 text-slate-400 hover:text-emerald-400 hover:border-emerald-900/60'
+                            }`}
+                          >
+                            <span>{item.ratio}</span>
+                            <span className="text-[7px] text-slate-500 font-sans tracking-tight">{item.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-1">
                     <label className="text-[9px] font-mono text-emerald-500 block font-bold uppercase">GENERATION PROMPT</label>
@@ -4679,7 +4614,7 @@ export default function App() {
                                 alt={job.prompt}
                                 referrerPolicy="no-referrer"
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 cursor-pointer"
-                                onClick={() => setFullScreenImage(job.resultUrl)}
+                                onClick={() => setSelectedStudioJob(job)}
                               />
                             )}
                             {job.type === 'video' && (
@@ -4706,7 +4641,8 @@ export default function App() {
                           ) : (
                             <div className="p-6 text-center bg-black/60 rounded-lg border border-emerald-950/60 flex flex-col items-center justify-center gap-2">
                               <RefreshCw className="text-[#00ff66] animate-spin h-5 w-5" />
-                              <span className="text-[9px] text-[#00ff66] font-mono font-bold animate-pulse">GENERATION PIPELINE ENGAGED...</span>
+                              <span className="text-[9px] text-[#00ff66] font-mono font-bold animate-pulse uppercase">SYNTHESIZING VIA {job.provider || 'AI ENGINE'}...</span>
+                              <span className="text-[8px] text-slate-500 font-mono">Aspect Ratio: {job.aspectRatio || '1:1'}</span>
                             </div>
                           )
                         )}
@@ -4727,6 +4663,17 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Bento Gallery of Creations */}
+            {completedImageJobs.length > 0 && (
+              <div className="lg:col-span-3 pt-6 mt-2 border-t border-emerald-950/40">
+                <InteractiveImageBentoGallery
+                  imageItems={completedImageJobs}
+                  title="Your Synthetic Art Gallery"
+                  description="Drag to pan through your high-resolution generations. Click any tile to inspect model metadata and download."
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -5696,7 +5643,6 @@ export default function App() {
             { id: 'operations', label: 'OPERATIONS', icon: <Trello size={14} /> },
             { id: 'agents', label: 'AGENTS', icon: <Bot size={14} /> },
             { id: 'mail', label: 'MAIL', icon: <Mail size={14} /> },
-            { id: 'journal', label: 'JOURNAL', icon: <BookOpen size={14} /> },
             { id: 'settings', label: 'SETTINGS', icon: <Settings size={14} /> }
           ].map((item) => {
             const isActive = activeTab === item.id;
@@ -6775,8 +6721,6 @@ export default function App() {
             renderOperations()
           ) : activeTab === 'agents' ? (
             renderAgentsGrid()
-          ) : activeTab === 'journal' ? (
-            renderJournal()
           ) : activeTab === 'mail' ? (
             /* MAIL INTEGRATION TAB */
             <div className="flex-1 overflow-hidden">
@@ -7215,6 +7159,104 @@ export default function App() {
                 </a>
               </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedStudioJob && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 md:p-6"
+            onClick={() => setSelectedStudioJob(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.5, bounce: 0.15 }}
+              className="bg-zinc-950 border border-emerald-950/60 rounded-xl overflow-hidden max-w-5xl w-full max-h-[90vh] grid grid-cols-1 md:grid-cols-12 shadow-2xl relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Close Button */}
+              <button
+                onClick={() => setSelectedStudioJob(null)}
+                className="absolute top-4 right-4 b-10 p-2 rounded-full bg-black/60 border border-emerald-900/30 text-slate-400 hover:text-white hover:bg-emerald-950/40 transition-colors"
+              >
+                <X size={18} />
+              </button>
+
+              {/* Left Column: Image Canvas */}
+              <div className="md:col-span-7 bg-black flex items-center justify-center p-4 min-h-[300px] md:max-h-[85vh] border-b md:border-b-0 md:border-r border-emerald-950/30 relative group">
+                <img
+                  src={selectedStudioJob.resultUrl}
+                  alt={selectedStudioJob.prompt}
+                  referrerPolicy="no-referrer"
+                  className="max-w-full max-h-[70vh] object-contain rounded-md shadow-lg animate-fade-in"
+                />
+              </div>
+
+              {/* Right Column: Detailed Metadata Panel */}
+              <div className="md:col-span-5 p-6 md:p-8 flex flex-col justify-between overflow-y-auto max-h-[85vh] bg-[#030704]">
+                <div className="space-y-6">
+                  <div>
+                    <span className="text-[9px] font-mono font-extrabold text-[#00ff66] bg-emerald-950/50 border border-emerald-500/20 px-2.5 py-1 rounded-full tracking-wider uppercase inline-block">
+                      {selectedStudioJob.provider}
+                    </span>
+                    <h2 className="text-lg font-bold text-slate-100 font-sans tracking-tight mt-3">
+                      Asset Details & Metadata
+                    </h2>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-mono text-emerald-500/80 block uppercase font-bold font-sans">Generation Prompt</span>
+                      <div className="text-xs text-slate-300 leading-relaxed bg-black/40 border border-emerald-950/40 p-3 rounded font-sans italic relative select-all">
+                        "{selectedStudioJob.prompt}"
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                      <div className="space-y-1 bg-black/20 border border-emerald-950/20 p-2 rounded">
+                        <span className="text-[9px] font-mono text-slate-500 block uppercase font-bold">Aspect Ratio</span>
+                        <span className="text-xs text-[#00ff66] font-mono font-bold">
+                          {selectedStudioJob.aspectRatio || '1:1'}
+                        </span>
+                      </div>
+                      <div className="space-y-1 bg-black/20 border border-emerald-950/20 p-2 rounded">
+                        <span className="text-[9px] font-mono text-slate-500 block uppercase font-bold font-sans">Generated At</span>
+                        <span className="text-xs text-slate-300 font-mono">
+                          {new Date(selectedStudioJob.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-6 border-t border-emerald-950/30 mt-6">
+                  <a
+                    href={selectedStudioJob.resultUrl}
+                    download={`generation-${selectedStudioJob.id}.png`}
+                    className="w-full px-4 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-400 text-[#00ff66] font-mono text-xs font-bold rounded flex items-center justify-center gap-2 transition-all transform hover:translate-y-[-1px] cursor-pointer"
+                  >
+                    <Download size={14} />
+                    DOWNLOAD HIGH-RES
+                  </a>
+
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedStudioJob.prompt);
+                    }}
+                    className="w-full px-4 py-2.5 bg-black hover:bg-emerald-950/20 border border-emerald-950 text-slate-300 font-mono text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Copy size={14} />
+                    COPY PROMPT TEXT
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -1430,6 +1430,8 @@ interface StudioJob {
   provider: string;
   error?: string;
   timestamp: string;
+  aspectRatio?: string;
+  model?: string;
 }
 
 const HERMES_GATEWAY_URL = process.env.HERMES_GATEWAY_URL || 'http://localhost:8642';
@@ -1877,9 +1879,25 @@ app.get('/api/studio/jobs', (req, res) => {
 });
 
 app.post('/api/studio/jobs', async (req, res) => {
-  const { type, prompt, providerKey } = req.body;
+  const { type, prompt, providerKey, model, aspectRatio } = req.body;
   if (!type || !prompt) {
     return res.status(400).json({ error: 'Type and prompt are required' });
+  }
+
+  let providerDisplayName = 'Google Gemini';
+  if (type === 'image') {
+    const selectedModel = model || 'gemini-2.5-flash-image';
+    if (selectedModel === 'openai-codex') {
+      providerDisplayName = 'OpenAI Codex (gpt-image-2)';
+    } else if (selectedModel === 'pollinations') {
+      providerDisplayName = 'Pollinations.ai (FLUX)';
+    } else if (selectedModel.startsWith('pollinations-')) {
+      providerDisplayName = `Pollinations.ai (${selectedModel.substring('pollinations-'.length).toUpperCase()})`;
+    } else if (selectedModel === 'gemini-2.5-flash-image') {
+      providerDisplayName = 'Gemini 2.5 Flash Image';
+    }
+  } else {
+    providerDisplayName = type === 'video' ? 'Synthesia Engine' : 'Neural Vocoder API';
   }
 
   const job: StudioJob = {
@@ -1887,8 +1905,10 @@ app.post('/api/studio/jobs', async (req, res) => {
     type,
     prompt,
     status: 'pending',
-    provider: type === 'image' ? 'Google Gemini' : 'fal.ai (Stub)',
-    timestamp: new Date().toISOString()
+    provider: providerDisplayName,
+    timestamp: new Date().toISOString(),
+    aspectRatio: aspectRatio || '1:1',
+    model: model || 'gemini-2.5-flash-image'
   };
 
   studioJobs.unshift(job);
@@ -1898,6 +1918,30 @@ app.post('/api/studio/jobs', async (req, res) => {
       try {
         job.status = 'processing';
         
+        // Map Aspect Ratio to Dimensions
+        const selectedRatio = aspectRatio || '1:1';
+        let width = 1024;
+        let height = 1024;
+        if (selectedRatio === '16:9') {
+          width = 1024;
+          height = 576;
+        } else if (selectedRatio === '9:16') {
+          width = 576;
+          height = 1024;
+        } else if (selectedRatio === '4:3') {
+          width = 1024;
+          height = 768;
+        } else if (selectedRatio === '3:4') {
+          width = 768;
+          height = 1024;
+        } else if (selectedRatio === '3:2') {
+          width = 1024;
+          height = 683;
+        } else if (selectedRatio === '2:3') {
+          width = 683;
+          height = 1024;
+        }
+
         // Define Image Providers
         const imageProviders: Record<string, { needsKey: boolean, call: (prompt: string, key?: string, requestedModel?: string) => Promise<string> }> = {
           nanoBanana: {
@@ -1921,7 +1965,7 @@ app.post('/api/studio/jobs', async (req, res) => {
                   try {
                     response = await client.models.generateContent({
                       model: 'gemini-2.5-flash-image',
-                      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+                      contents: [{ role: 'user', parts: [{ text: promptText + ` (aspect ratio: ${selectedRatio})` }] }],
                       config: {
                          responseModalities: ["IMAGE"] as any
                       }
@@ -1968,7 +2012,9 @@ app.post('/api/studio/jobs', async (req, res) => {
                 const subModel = requestedModel.substring('pollinations-'.length);
                 modelQuery = `?model=${subModel}`;
               }
-              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}${modelQuery ? modelQuery + '&' : '?'}nologo=true&referrer=joelos`;
+              const seed = Math.floor(Math.random() * 10000000);
+              const dimensionQuery = `&width=${width}&height=${height}`;
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}${modelQuery ? modelQuery + '&' : '?'}${dimensionQuery}&nologo=true&seed=${seed}&referrer=joelos`;
               const headers: Record<string, string> = {};
               if (process.env.POLLINATIONS_TOKEN) {
                 headers['Authorization'] = `Bearer ${process.env.POLLINATIONS_TOKEN}`;
@@ -1999,7 +2045,9 @@ app.post('/api/studio/jobs', async (req, res) => {
           'openai-codex': {
             needsKey: false,
             call: async (promptText: string) => {
-              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?model=flux-realism&nologo=true&referrer=joelos`;
+              const seed = Math.floor(Math.random() * 10000000);
+              const dimensionQuery = `&width=${width}&height=${height}`;
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?model=flux-realism&nologo=true&seed=${seed}${dimensionQuery}&referrer=joelos`;
               const res = await fetch(url);
               if (!res.ok) {
                 const text = await res.text();
@@ -2019,9 +2067,9 @@ app.post('/api/studio/jobs', async (req, res) => {
 
         // If the user selected a model that indicates pollinations, or we use nanoBanana by default
         let selectedProvider = 'nanoBanana';
-        if (req.body.model === 'pollinations' || req.body.model?.startsWith('pollinations-')) {
+        if (model === 'pollinations' || model?.startsWith('pollinations-')) {
            selectedProvider = 'pollinations';
-        } else if (req.body.model === 'openai-codex') {
+        } else if (model === 'openai-codex') {
            selectedProvider = 'openai-codex';
         }
 
@@ -2031,18 +2079,7 @@ app.post('/api/studio/jobs', async (req, res) => {
         }
 
         try {
-           job.resultUrl = await provider.call(prompt, providerKey, req.body.model);
-           let providerDisplayName = 'Google Gemini (generateContent)';
-           if (selectedProvider === 'pollinations') {
-              if (req.body.model?.startsWith('pollinations-')) {
-                providerDisplayName = `Pollinations.ai (${req.body.model.substring('pollinations-'.length).toUpperCase()})`;
-              } else {
-                providerDisplayName = 'Pollinations.ai (FLUX)';
-              }
-           } else if (selectedProvider === 'openai-codex') {
-              providerDisplayName = 'OpenAI Codex (gpt-image-2)';
-           }
-           job.provider = providerDisplayName;
+           job.resultUrl = await provider.call(prompt, providerKey, model);
            job.status = 'completed';
         } catch (err: any) {
            console.error(`${selectedProvider} failed:`, err);
