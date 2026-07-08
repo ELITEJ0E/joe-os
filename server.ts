@@ -1325,7 +1325,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const installProc = spawn(npmCmd, ['install', '--no-audit', '--no-fund'], {
     cwd: tempDir,
-    env: { ...process.env, NODE_ENV: 'development' }
+    env: { ...process.env, NODE_ENV: 'development' },
+    shell: process.platform === 'win32'
   });
 
   const procInfo = {
@@ -1365,7 +1366,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     const devCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
     const devProc = spawn(devCmd, ['vite', '--port', String(proj.port || 3001), '--host', '0.0.0.0', '--base', `/sandbox-preview/${proj.id}/`], {
       cwd: tempDir,
-      env: { ...process.env, NODE_ENV: 'development' }
+      env: { ...process.env, NODE_ENV: 'development' },
+      shell: process.platform === 'win32'
     });
 
     procInfo.devProc = devProc;
