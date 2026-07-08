@@ -61,6 +61,7 @@ import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupCon
 import { ModelHub } from './components/ModelHub';
 import { MailIntegration } from './components/MailIntegration';
 import { VoiceWaveVisualizer } from './components/VoiceWaveVisualizer';
+import { synthesizeSpeech } from './ttsRegistry';
 import InteractiveImageBentoGallery from '../components/ui/bento-gallery';
 import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus, Goal } from './types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -427,6 +428,9 @@ export default function App() {
   ]);
   const [ollamaModelDetails, setOllamaModelDetails] = useState<OllamaModelInfo[]>([]);
   const [showModelHub, setShowModelHub] = useState<boolean>(false);
+  const [agentVoiceEnabled, setAgentVoiceEnabled] = useState<boolean>(false);
+  const [messageAudioUrls, setMessageAudioUrls] = useState<Record<string, string>>({});
+  const [playedMessages, setPlayedMessages] = useState<Set<string>>(new Set());
   const [ollamaRefreshTrigger, setOllamaRefreshTrigger] = useState<number>(0);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState<boolean>(true);
 
@@ -541,6 +545,35 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('joelos_activity_feed', JSON.stringify(activityFeed));
   }, [activityFeed]);
+
+  // TTS Synthesis for completed agent messages
+  useEffect(() => {
+    if (!agentVoiceEnabled) return;
+    
+    // Look at the last message to see if it just finished streaming and is an agent
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && !lastMsg.isStreaming && lastMsg.sender !== 'user' && lastMsg.sender !== 'system') {
+      if (!playedMessages.has(lastMsg.id)) {
+        // Mark as played to prevent duplicate generation
+        setPlayedMessages(prev => new Set(prev).add(lastMsg.id));
+        
+        // Use rawOutput if it exists (usually cleaner text), otherwise text
+        const textToSpeak = lastMsg.rawOutput || lastMsg.text;
+        
+        // Don't speak very long code blocks or huge logs, truncate if necessary
+        const cleanText = textToSpeak.replace(/```[\s\S]*?```/g, ' [Code Block Omitted] ').substring(0, 500);
+
+        synthesizeSpeech(cleanText).then(url => {
+          if (url) {
+            setMessageAudioUrls(prev => ({ ...prev, [lastMsg.id]: url }));
+            // Auto-play
+            const audio = new Audio(url);
+            audio.play().catch(e => console.warn('Autoplay failed:', e));
+          }
+        });
+      }
+    }
+  }, [messages, agentVoiceEnabled, playedMessages]);
 
   // Goals state
   const [goals, setGoals] = useState<Goal[]>(() => {
@@ -4450,9 +4483,9 @@ export default function App() {
                           type="button"
                           onClick={() => {
                             setStudioType(type.id as any);
-                            if (type.id === 'voice') setStudioModel('zai-audio');
-                            else if (type.id === 'video') setStudioModel('synthesia');
-                            else setStudioModel('gemini-2.5-flash-image');
+                            if (type.id === 'voice') setStudioModel('pollinations-audio');
+                            else if (type.id === 'video') setStudioModel('pollinations-video');
+                            else setStudioModel('pollinations');
                           }}
                           className={`py-2 rounded border font-mono text-[10px] font-extrabold flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
                             studioType === type.id
@@ -4476,21 +4509,18 @@ export default function App() {
                     >
                       {studioType === 'voice' ? (
                         <>
-                          <option value="zai-audio">Z.ai Voice Engine (GML Audio - Free)</option>
-                          <option value="zai-audio-pro">Z.ai Voice Engine Pro (Free)</option>
+                          <option value="pollinations-audio">Pollinations Voice Engine (Free)</option>
                           <option value="neural-vocoder">Neural Vocoder API (Default)</option>
                         </>
                       ) : studioType === 'video' ? (
                         <>
-                          <option value="synthesia">Synthesia Engine (Default)</option>
-                          <option value="zai-video">Z.ai Video Gen (Free)</option>
+                          <option value="pollinations-video">Pollinations Video Gen (Default Free)</option>
+                          <option value="synthesia">Synthesia Engine</option>
                         </>
                       ) : (
                         <>
                           <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
                           <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
-                          <option value="zai">Z.ai Vision Engine (GML Base - Free)</option>
-                          <option value="zai-pro">Z.ai Vision Engine (GML Pro - Free)</option>
                           <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
                           <option value="pollinations-flux-pro">Pollinations.ai (FLUX Pro HD - Free)</option>
                           <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
@@ -5981,6 +6011,16 @@ export default function App() {
                                 <span>Generating streamed response from agent...</span>
                               </div>
                             )}
+
+                            {messageAudioUrls[msg.id] && (
+                              <div className="mt-4 bg-[#0a1610] rounded-xl border border-emerald-900/40 p-2 overflow-hidden shadow-inner">
+                                <audio
+                                  src={messageAudioUrls[msg.id]}
+                                  controls
+                                  className="w-full h-8 opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -6120,6 +6160,16 @@ export default function App() {
                               <div className="flex items-center gap-2 mt-4 text-xs font-mono text-[#00ff66] bg-[#05180f] p-3 rounded-lg border border-emerald-500/20">
                                 <RefreshCw size={12} className="animate-spin text-[#00ff66]" />
                                 <span>Generating streamed response from agent...</span>
+                              </div>
+                            )}
+
+                            {messageAudioUrls[msg.id] && (
+                              <div className="mt-4 bg-[#0a1610] rounded-xl border border-emerald-900/40 p-2 overflow-hidden shadow-inner">
+                                <audio
+                                  src={messageAudioUrls[msg.id]}
+                                  controls
+                                  className="w-full h-8 opacity-70 hover:opacity-100 transition-opacity"
+                                />
                               </div>
                             )}
                           </div>
@@ -6380,6 +6430,19 @@ export default function App() {
                         <Server size={13} />
                         OPEN MODELS HUB
                       </button>
+                    </div>
+                    
+                    {/* Agent Voice TTS Toggle */}
+                    <div className="flex items-center justify-between bg-[#08150e] p-3 rounded-lg border border-emerald-950/50">
+                      <div className="flex flex-col">
+                        <label className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Agent Voice (TTS)</label>
+                        <span className="text-[10px] text-emerald-500/70 font-mono mt-0.5">Read agent responses aloud automatically (Free via Pollinations)</span>
+                      </div>
+                      <Switch 
+                        checked={agentVoiceEnabled}
+                        onCheckedChange={setAgentVoiceEnabled}
+                        className="data-[state=checked]:bg-[#00ff66] data-[state=unchecked]:bg-slate-700"
+                      />
                     </div>
 
                     <div className="space-y-4 pt-2">

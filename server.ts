@@ -1931,18 +1931,16 @@ app.post('/api/studio/jobs', async (req, res) => {
       providerDisplayName = 'OpenAI Codex (gpt-image-2)';
     } else if (selectedModel === 'pollinations') {
       providerDisplayName = 'Pollinations.ai (FLUX)';
-    } else if (selectedModel === 'zai' || selectedModel?.startsWith('zai-')) {
-      providerDisplayName = 'Z.ai Vision Engine';
     } else if (selectedModel.startsWith('pollinations-')) {
       providerDisplayName = `Pollinations.ai (${selectedModel.substring('pollinations-'.length).toUpperCase()})`;
     } else if (selectedModel === 'gemini-2.5-flash-image') {
       providerDisplayName = 'Gemini 2.5 Flash Image';
     }
   } else {
-    if (model?.startsWith('zai-audio')) {
-      providerDisplayName = 'Z.ai Voice Engine';
-    } else if (model === 'zai-video') {
-      providerDisplayName = 'Z.ai Video Gen';
+    if (model?.startsWith('pollinations-audio')) {
+      providerDisplayName = 'Pollinations Voice Engine';
+    } else if (model === 'pollinations-video') {
+      providerDisplayName = 'Pollinations Video Gen';
     } else {
       providerDisplayName = type === 'video' ? 'Synthesia Engine' : 'Neural Vocoder API';
     }
@@ -2110,51 +2108,12 @@ app.post('/api/studio/jobs', async (req, res) => {
               const mimeType = contentType || 'image/jpeg';
               return `data:${mimeType};base64,${buffer.toString('base64')}`;
             }
-          },
-          zai: {
-            needsKey: false,
-            call: async (promptText: string, key?: string, requestedModel?: string) => {
-              const seed = Math.floor(Math.random() * 10000000);
-              const isPro = requestedModel === 'zai-pro';
-              const zaiPrompt = `[Z.ai GML ${isPro ? 'Pro' : 'Base'} Engine] ${promptText}`;
-              const dimensionQuery = `&width=${width}&height=${height}`;
-              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(zaiPrompt)}?model=flux-realism&nologo=true&seed=${seed}${dimensionQuery}&referrer=zai`;
-              
-              try {
-                const response = await fetch(`https://image.z.ai/api/generate?prompt=${encodeURIComponent(promptText)}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ prompt: promptText, model: isPro ? 'gml-pro' : 'gml-base', width, height }),
-                  signal: AbortSignal.timeout(2000)
-                }).catch(() => null);
-
-                if (response && response.ok) {
-                  const data = await response.json();
-                  if (data.url) return data.url;
-                  if (data.image) return data.image;
-                }
-              } catch (e) {
-                console.log("Direct Z.ai API fallback to GML pollinations engine.");
-              }
-
-              const res = await fetch(url);
-              if (!res.ok) {
-                throw new Error(`Z.ai GML Visualizer failed: ${res.statusText}`);
-              }
-              const contentType = res.headers.get('content-type') || '';
-              const arrayBuffer = await res.arrayBuffer();
-              const buffer = Buffer.from(arrayBuffer);
-              const mimeType = contentType || 'image/jpeg';
-              return `data:${mimeType};base64,${buffer.toString('base64')}`;
-            }
           }
         };
 
         // If the user selected a model that indicates pollinations, or we use nanoBanana by default
         let selectedProvider = 'nanoBanana';
-        if (model === 'zai' || model === 'zai-pro') {
-          selectedProvider = 'zai';
-        } else if (model === 'pollinations' || model?.startsWith('pollinations-')) {
+        if (model === 'pollinations' || model?.startsWith('pollinations-')) {
           selectedProvider = 'pollinations';
         } else if (model === 'openai-codex') {
           selectedProvider = 'openai-codex';
@@ -2188,27 +2147,22 @@ app.post('/api/studio/jobs', async (req, res) => {
       try {
         let resultUrl = '';
         if (type === 'video') {
-          // Attempt connection to z.ai video api if model is zai-video
-          if (model === 'zai-video') {
-            try {
-              const response = await fetch('https://video.z.ai/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, model: 'gml-video-1' }),
-                signal: AbortSignal.timeout(2000)
-              }).catch(() => null);
+          try {
+            const url = `https://gen.pollinations.ai/video/${encodeURIComponent(prompt)}?model=seedance`;
+            const response = await fetch(url).catch(() => null);
 
-              if (response && response.ok) {
-                const data = await response.json();
-                if (data.url) resultUrl = data.url;
-              }
-            } catch (e) {
-              console.log("Direct Z.ai Video API fallback.");
+            if (response && response.ok) {
+              const arrayBuffer = await response.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              const contentType = response.headers.get('content-type') || 'video/mp4';
+              resultUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
             }
+          } catch (e) {
+            console.error("Pollinations video failed:", e);
           }
 
           if (!resultUrl) {
-            // High fidelity thematic fallback videos
+            console.warn("WARNING: Using static Mixkit video fallback because Pollinations video generation failed.");
             const lowerPrompt = prompt.toLowerCase();
             if (lowerPrompt.includes('neon') || lowerPrompt.includes('cyber') || lowerPrompt.includes('tech') || lowerPrompt.includes('light')) {
               resultUrl = 'https://assets.mixkit.co/videos/preview/mixkit-abstract-laser-lights-background-32115-large.mp4';
@@ -2217,42 +2171,38 @@ app.post('/api/studio/jobs', async (req, res) => {
             }
           }
         } else if (type === 'voice') {
-          // Attempt connection to z.ai audio api if model is zai-audio / zai-audio-pro
-          if (model?.startsWith('zai-audio')) {
-            try {
-              const response = await fetch('https://audio.z.ai/api/synthesize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, model: model === 'zai-audio-pro' ? 'gml-audio-pro' : 'gml-audio-base' }),
-                signal: AbortSignal.timeout(2000)
-              }).catch(() => null);
-
-              if (response && response.ok) {
-                const data = await response.json();
-                if (data.url) resultUrl = data.url;
-              }
-            } catch (e) {
-              console.log("Direct Z.ai Audio API fallback.");
+          try {
+            const url = `https://gen.pollinations.ai/audio/${encodeURIComponent(prompt)}?voice=onyx`;
+            const response = await fetch(url).catch(() => null);
+            if (response && response.ok) {
+              const arrayBuffer = await response.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              const contentType = response.headers.get('content-type') || 'audio/mpeg';
+              resultUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
             }
+          } catch (e) {
+            console.error("Pollinations audio failed:", e);
           }
 
           if (!resultUrl) {
-            // High-fidelity thematic music tracks based on prompts
+            console.warn("WARNING: Using static SoundHelix audio fallback because Pollinations voice generation failed.");
             const lowerPrompt = prompt.toLowerCase();
             if (lowerPrompt.includes('relax') || lowerPrompt.includes('meditation') || lowerPrompt.includes('breath') || lowerPrompt.includes('calm') || lowerPrompt.includes('peace')) {
-              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'; // Calm acoustic ambient
+              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3';
             } else if (lowerPrompt.includes('cyber') || lowerPrompt.includes('synth') || lowerPrompt.includes('futuristic') || lowerPrompt.includes('neon')) {
-              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3'; // Fast techno synth
+              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3';
             } else if (lowerPrompt.includes('piano') || lowerPrompt.includes('classical') || lowerPrompt.includes('sad') || lowerPrompt.includes('slow')) {
-              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3'; // Smooth acoustic piano/guitar style
+              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3';
             } else {
-              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'; // General SoundHelix track
+              resultUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
             }
           }
         }
 
         // Wait a small organic processing time of 3 seconds to look like real server synthesization
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (!resultUrl.includes('pollinations.ai')) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
 
         const liveJob = studioJobs.find(j => j.id === job.id);
         if (liveJob) {
