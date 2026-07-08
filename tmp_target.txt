@@ -1,0 +1,72 @@
+  const startPipelineOrchestration = async (fromPhase?: string) => {
+    const isEnabled = (id: AgentId) => {
+      // Use latest agent status for delegation checks
+      const agent = agents.find(a => a.id === id);
+      return agent ? agent.enabled !== false : true;
+    };
+
+    const callAgent = async (agentId: AgentId, prompt: string): Promise<string> => {
+      const systemInst = systemInstructions[agentId] || '';
+      let activeModel = agentModels[agentId] || (engine === 'gemini' ? 'gemini-2.5-flash' : 'llama3.2');
+      
+      let finalPrompt = prompt;
+      if (pipelineRefinements.current.length > 0) {
+        finalPrompt += "\n\nCRITICAL USER REFINEMENTS (INJECTED MID-RUN):\n" + pipelineRefinements.current.map(r => "- " + r).join("\n");
+      }
+      
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engine,
+          model: activeModel,
+          messages: [{ role: 'user', content: finalPrompt }],
+          systemInstruction: systemInst,
+          stream: false,
+          ollamaUrl,
+          cloudApiKey,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Agent ${agentId} call failed with HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      return data.text || '';
+    };
+
+    pipelineAbortedRef.current = false;
+    let targetQuery = '';
+    
+    if (fromPhase) {
+      targetQuery = currentQuery;
+      setPipelineIsRunning(true);
+      setRuntimeError(null);
+      setFailedPhase(null);
+    } else {
+      if (!globalPrompt.trim()) return;
+      if (pipelineIsRunning) {
+        const promptText = globalPrompt;
+        setGlobalPrompt('');
+        pipelineRefinements.current.push(promptText);
+
+        const feedbackMsgId = 'user-refine-' + Date.now();
+        setMessages(prev => [...prev, {
+          id: feedbackMsgId,
+          sender: 'user',
+          text: promptText,
+          timestamp: new Date().toLocaleTimeString(),
+        }, {
+          id: 'sys-refine-' + Date.now(),
+          sender: 'system',
+          text: `⚡ Refinement received mid-run: "${promptText}". Live pipeline nodes will integrate this instruction.`,
+          timestamp: new Date().toLocaleTimeString(),
+        }]);
+        return;
+      }
+      pipelineRefinements.current = [];
+      targetQuery = globalPrompt;
+      setCurrentQuery(targetQuery);
+      setGlobalPrompt('');
+
+      setAgentTimings({});

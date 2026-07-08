@@ -2229,6 +2229,72 @@ app.delete('/api/studio/jobs/:id', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/tts/piper', (req, res) => {
+  if (process.env.PIPER_ENABLED !== 'true') {
+    return res.status(403).json({ error: 'Piper TTS is not enabled on this server.' });
+  }
+
+  const text = req.body.text;
+  if (!text) {
+    return res.status(400).json({ error: 'Text is required for TTS' });
+  }
+
+  try {
+    const piperModel = process.env.PIPER_MODEL || 'en_GB-jenny_dioco-medium.onnx';
+    const piperPath = process.env.PIPER_PATH || 'piper';
+    
+    const piperProc = spawn(piperPath, ['--model', piperModel, '--output_file', '-']);
+
+    res.setHeader('Content-Type', 'audio/wav');
+    piperProc.stdout.pipe(res);
+    
+    piperProc.stdin.write(text);
+    piperProc.stdin.end();
+
+    piperProc.stderr.on('data', (data) => {
+      console.error(`Piper stderr: ${data}`);
+    });
+    
+    piperProc.on('error', (err) => {
+      console.error('Piper process error:', err);
+      if (!res.headersSent) {
+        res.status(500).end('Piper process error');
+      }
+    });
+
+  } catch (err: any) {
+    console.error('Piper execution error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to synthesize speech via Piper.' });
+    }
+  }
+});
+
+app.post('/api/stt/transcribe', async (req, res) => {
+  // Proxy audio data to the local python STT sidecar running faster-whisper
+  const sidecarUrl = process.env.STT_SIDECAR_URL || 'http://localhost:8643';
+  try {
+    const response = await fetch(`${sidecarUrl}/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': req.headers['content-type'] || 'audio/webm',
+      },
+      body: req, // Pipe the request stream directly
+      // @ts-ignore
+      duplex: 'half'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Sidecar returned ${response.status}`);
+    }
+    const data = await response.json();
+    return res.json(data);
+  } catch (err: any) {
+    console.error('STT Sidecar proxy error:', err);
+    return res.status(500).json({ error: 'Failed to contact local STT sidecar', details: err.message });
+  }
+});
+
 // Run watcher on startup if configured
 const STARTUP_CONFIG = path.join(process.cwd(), 'vault-config.json');
 if (fs.existsSync(STARTUP_CONFIG)) {

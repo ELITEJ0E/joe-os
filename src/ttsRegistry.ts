@@ -1,5 +1,21 @@
 export async function synthesizeSpeech(text: string): Promise<string | null> {
-  // 1. PRIMARY: Pollinations API
+  // 1. PRIMARY: Piper TTS (Local, offline, open source)
+  try {
+    const piperRes = await fetch('/api/tts/piper', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(8000) // Local might be slow depending on CPU
+    });
+    if (piperRes.ok) {
+      const blob = await piperRes.blob();
+      return URL.createObjectURL(blob);
+    }
+  } catch (e) {
+    console.warn("Piper TTS failed or not enabled (falling back to Pollinations):", e);
+  }
+
+  // 2. SECONDARY: Pollinations API (Free cloud fallback)
   try {
     const url = `https://gen.pollinations.ai/audio/${encodeURIComponent(text)}?voice=onyx`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
@@ -11,7 +27,7 @@ export async function synthesizeSpeech(text: string): Promise<string | null> {
     console.warn("Pollinations TTS failed or timed out:", e);
   }
 
-  // 2. FALLBACK: Web Speech API (Client-side)
+  // 3. FALLBACK: Web Speech API (Client-side browser voices)
   try {
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);

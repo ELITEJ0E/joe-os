@@ -61,6 +61,7 @@ import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupCon
 import { ModelHub } from './components/ModelHub';
 import { MailIntegration } from './components/MailIntegration';
 import { VoiceWaveVisualizer } from './components/VoiceWaveVisualizer';
+import { VoiceModeChannel } from './components/VoiceModeChannel';
 import { synthesizeSpeech } from './ttsRegistry';
 import InteractiveImageBentoGallery from '../components/ui/bento-gallery';
 import { Agent, AgentId, PipelineNode, Message, MemoryItem, OllamaModelInfo, OpsTask, ActivityEntry, Alert, KpiMetric, TaskStatus, Goal } from './types';
@@ -2101,7 +2102,7 @@ export default function App() {
   };
 
   // Run whole 7-agent pipeline orchestration step-by-step
-  const startPipelineOrchestration = async (fromPhase?: string) => {
+  const startPipelineOrchestration = async (fromPhase?: string, customPrompt?: string) => {
     const isEnabled = (id: AgentId) => {
       // Use latest agent status for delegation checks
       const agent = agents.find(a => a.id === id);
@@ -2147,10 +2148,11 @@ export default function App() {
       setRuntimeError(null);
       setFailedPhase(null);
     } else {
-      if (!globalPrompt.trim()) return;
+      const promptToUse = customPrompt || globalPrompt;
+      if (!promptToUse.trim()) return;
       if (pipelineIsRunning) {
-        const promptText = globalPrompt;
-        setGlobalPrompt('');
+        const promptText = promptToUse;
+        if (!customPrompt) setGlobalPrompt('');
         pipelineRefinements.current.push(promptText);
 
         const feedbackMsgId = 'user-refine-' + Date.now();
@@ -2168,10 +2170,10 @@ export default function App() {
         return;
       }
       pipelineRefinements.current = [];
-      targetQuery = globalPrompt;
+      targetQuery = promptToUse;
       setCurrentQuery(targetQuery);
-      setGlobalPrompt('');
-
+      if (!customPrompt) setGlobalPrompt('');
+      
       setAgentTimings({});
       setAgentTokens({});
       setFailedPhase(null);
@@ -6258,11 +6260,26 @@ export default function App() {
 
               {/* Chat Input Prompt Area */}
               <div className={`p-6 border-t border-emerald-900/30 ${theme === 'oled' ? 'bg-black' : 'bg-[#030604]'}`}>
-                <div className="max-w-5xl mx-auto flex gap-3 relative items-end">
-                  <div className="relative flex-1">
-                    <textarea
-                      value={chatTab === 'private' ? privatePrompt : globalPrompt}
-                      onChange={(e) => chatTab === 'private' ? setPrivatePrompt(e.target.value) : setGlobalPrompt(e.target.value)}
+                <div className="max-w-5xl mx-auto flex flex-col gap-4 relative">
+                  
+                  {/* Voice Mode integration */}
+                  {chatTab !== 'private' && (
+                    <div className="w-full flex justify-center mb-2">
+                      <VoiceModeChannel 
+                        isProcessing={pipelineIsRunning}
+                        lastAssistantMessage={messages.length > 0 && messages[messages.length - 1].sender !== 'user' ? messages[messages.length - 1].text : null}
+                        onSendMessage={async (text) => {
+                          startPipelineOrchestration(undefined, text);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 relative items-end">
+                    <div className="relative flex-1">
+                      <textarea
+                        value={chatTab === 'private' ? privatePrompt : globalPrompt}
+                        onChange={(e) => chatTab === 'private' ? setPrivatePrompt(e.target.value) : setGlobalPrompt(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
@@ -6381,6 +6398,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            </div>
             </>
           ) : activeTab === 'settings' ? (
             /* SETTINGS / CONFIGURATION TAB */
