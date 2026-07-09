@@ -118,26 +118,72 @@ export const VoiceModeChannel: React.FC<VoiceModeChannelProps> = ({
   const handleTranscription = async (blob: Blob) => {
     try {
       setVoiceState('thinking');
-      const formData = new FormData();
-      formData.append('audio', blob, 'recording.webm');
       
-      // Call our proxy or directly to sidecar
-      const res = await fetch('/api/stt/transcribe', {
-        method: 'POST',
-        body: blob, // Express handles raw body, wait actually FormData is easier if proxy supports it.
-        headers: {
-          'Content-Type': blob.type,
+      // Attempt 1: Try the local Python faster-whisper STT Sidecar
+      try {
+        const res = await fetch('/api/stt/transcribe', {
+          method: 'POST',
+          body: blob,
+          headers: {
+            'Content-Type': blob.type,
+          }
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.text && data.text.trim().length > 0) {
+            await onSendMessage(data.text.trim());
+            return;
+          }
         }
-      });
-      
-      if (!res.ok) throw new Error('Transcription failed');
-      
-      const data = await res.json();
-      if (data.text && data.text.trim().length > 0) {
-        await onSendMessage(data.text.trim());
-      } else {
-        setVoiceState('idle');
+      } catch (sidecarErr) {
+        console.warn("Local STT Sidecar not found or failed, falling back to browser STT...", sidecarErr);
       }
+
+      // Attempt 2: Fallback to Browser's built-in Web Speech API
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        setErrorMessage("Sidecar offline: Using browser STT fallback.");
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = async (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          if (transcript && transcript.trim().length > 0) {
+            await onSendMessage(transcript.trim());
+          } else {
+            setVoiceState('idle');
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error("Browser STT Error:", event.error);
+          setErrorMessage('Transcription failed.');
+          setVoiceState('idle');
+        };
+
+        recognition.onend = () => {
+          if (voiceState === 'thinking') {
+             // In case onresult didn't fire
+             // setVoiceState('idle');
+          }
+        };
+
+        // Note: The browser's SpeechRecognition normally requires its own recording flow. 
+        // Since we already recorded the blob via MediaRecorder, the browser API can't transcribe the blob directly easily.
+        // For a true fallback, we would have bypassed MediaRecorder. 
+        // However, this is just a warning, let's inform the user it failed instead of faking it, 
+        // OR we can trigger it. Since we already stopped the mic, starting it again is awkward.
+        setErrorMessage("STT sidecar is offline. Please run the python sidecar to enable transcription.");
+        setVoiceState('idle');
+        return;
+
+      } else {
+        throw new Error("No transcription service available.");
+      }
+
     } catch (err: any) {
       console.error('STT Error:', err);
       setErrorMessage('Transcription service unavailable.');
