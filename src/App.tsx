@@ -702,7 +702,7 @@ export default function App() {
   // 3. Studio States
   const [studioJobs, setStudioJobs] = useState<any[]>([]);
   const [studioPrompt, setStudioPrompt] = useState('');
-  const [studioModel, setStudioModel] = useState('gemini-2.5-flash-image');
+  const [studioModel, setStudioModel] = useState('gemini-3.1-flash-lite-image');
   const [studioType, setStudioType] = useState<'image' | 'video' | 'voice'>('image');
   const [studioAspectRatio, setStudioAspectRatio] = useState<string>('1:1');
   const [isStudioSubmitting, setIsStudioSubmitting] = useState(false);
@@ -4521,17 +4521,24 @@ export default function App() {
                         </>
                       ) : (
                         <>
-                          <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
-                          <option value="openai-codex">OpenAI Codex (gpt-image-2 via ChatGPT/Codex - Free)</option>
-                          <option value="pollinations">Pollinations.ai (FLUX - Default Free)</option>
-                          <option value="pollinations-flux-pro">Pollinations.ai (FLUX Pro HD - Free)</option>
-                          <option value="pollinations-flux-realism">Pollinations.ai (FLUX Realism - Free)</option>
-                          <option value="pollinations-flux-anime">Pollinations.ai (FLUX Anime - Free)</option>
-                          <option value="pollinations-flux-3d">Pollinations.ai (FLUX 3D CGI - Free)</option>
-                          <option value="pollinations-flux-coyo">Pollinations.ai (FLUX Coyo Art - Free)</option>
-                          <option value="pollinations-turbo">Pollinations.ai (SDXL Turbo - Free Fast)</option>
-                          <option value="pollinations-any-dark">Pollinations.ai (Any Dark Moody - Free)</option>
-                          <option value="pollinations-midjourney">Pollinations.ai (Midjourney V6 Style - Free)</option>
+                          <optgroup label="Official Google Gemini (Dedicated & Fast)">
+                            <option value="gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite Image (Official)</option>
+                            <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Official 1K HD)</option>
+                            <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana Legacy)</option>
+                          </optgroup>
+                          <optgroup label="Free Presets (Styled Pollinations AI Wrappers)">
+                            <option value="perchance">Perchance Image Gen Preset (8v407wxeu3 style)</option>
+                            <option value="openai-codex">OpenAI Codex Preset (gpt-image-2 style)</option>
+                            <option value="pollinations">Pollinations FLUX (Standard Free)</option>
+                            <option value="pollinations-flux-pro">Pollinations FLUX Pro HD (Free)</option>
+                            <option value="pollinations-flux-realism">Pollinations FLUX Realism (Free)</option>
+                            <option value="pollinations-flux-anime">Pollinations FLUX Anime (Free)</option>
+                            <option value="pollinations-flux-3d">Pollinations FLUX 3D CGI (Free)</option>
+                            <option value="pollinations-flux-coyo">Pollinations FLUX Coyo Art (Free)</option>
+                            <option value="pollinations-turbo">Pollinations SDXL Turbo (Free Fast)</option>
+                            <option value="pollinations-any-dark">Pollinations Any Dark Moody (Free)</option>
+                            <option value="pollinations-midjourney">Pollinations Midjourney V6 Style (Free)</option>
+                          </optgroup>
                         </>
                       )}
                     </select>

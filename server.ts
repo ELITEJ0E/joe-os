@@ -163,6 +163,12 @@ async function executeWithGeminiFallback<T>(
 function cleanErrorMessage(err: any): string {
   if (!err) return 'Unknown error occurred';
   const msg = err.message || String(err);
+  
+  // Custom check for Pollinations queue/rate-limits
+  if (typeof msg === 'string' && (msg.includes('pollinations.ai') || msg.includes('Queue full') || msg.includes('requests already queued') || msg.includes('max: 1'))) {
+    return 'The free alternative engine (Pollinations) is currently experiencing high traffic and its queue is full. Please try again in a moment, or switch to one of the official, dedicated "Google Gemini Image" models in the dropdown above (such as Gemini 3.1 Flash Lite Image or Gemini 3.1 Flash Image) which run with robust dedicated server instances!';
+  }
+
   try {
     if (typeof msg === 'string') {
       const trimmed = msg.trim();
@@ -438,9 +444,11 @@ app.post('/api/chat', async (req, res) => {
   // Mode: Gemini Cloud Engine
   if (engine === 'gemini') {
     try {
-      // Map Ollama / Generic models to correct Gemini models
+      // Map Ollama / Generic models to correct Gemini models or pass selected model directly
       let mappedModel = 'gemini-2.5-flash';
-      if (model?.toLowerCase().includes('coder') || model?.toLowerCase().includes('14b') || model?.toLowerCase().includes('pro')) {
+      if (model && (model.startsWith('gemini-') || model.startsWith('gemma-') || model.startsWith('imagen-') || model.startsWith('lyria-'))) {
+        mappedModel = model;
+      } else if (model?.toLowerCase().includes('coder') || model?.toLowerCase().includes('14b') || model?.toLowerCase().includes('pro')) {
         mappedModel = 'gemini-2.5-pro'; // Premium coder reasoning
       }
 
@@ -724,10 +732,62 @@ app.post('/api/provider-models', async (req, res) => {
       const geminiModels = [
         { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Recommended default. High speed, balanced multimodal capabilities.', isFree: true },
         { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Premium reasoning, high-fidelity coding, and complex analysis.', isFree: true },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)', description: 'Experimental next-gen lightweight model.', isFree: true },
+        { id: 'gemini-2.0-pro-exp-02-05', name: 'Gemini 2.0 Pro (Experimental)', description: 'Experimental premium next-gen reasoning model.', isFree: true },
+        { id: 'gemini-2.0-flash-thinking-exp-01-21', name: 'Gemini 2.0 Flash Thinking (Experimental)', description: 'Experimental reasoning model with internal thinking process.', isFree: true },
+        { id: 'gemini-omni-flash-preview', name: 'Gemini Omni Flash Preview', description: 'Multimodal omni model preview.', isFree: true },
+        { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'Super fast, budget-friendly lightweight model.', isFree: true },
+        { id: 'gemini-3.1-flash-lite-image', name: 'Gemini 3.1 Flash Lite Image', description: 'Official Gemini 3.1 lightweight image generation model.', isFree: true },
+        { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', description: 'Official Gemini 3.1 high-quality 1K image generation model.', isFree: true },
+        { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image', description: 'Gemini model specialized for image generation support.', isFree: true },
+        { id: 'gemini-2.5-flash-native-audio-latest', name: 'Gemini 2.5 Flash Native Audio', description: 'Audio processing and vocal generation support model.', isFree: true },
+        { id: 'perchance', name: 'Perchance Image Gen (8v407wxeu3)', description: 'Free high-fidelity stylized artistic image generator.', isFree: true },
+        { id: 'gemma-4-31b-it', name: 'Gemma 4 31B Instruct', description: 'Gemma 4 model instruction-tuned.', isFree: true },
+        { id: 'lyria-3-clip-preview', name: 'Lyria 3 Clip Preview', description: 'Audio/music clip generation support model.', isFree: true },
         { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, lightweight model for everyday tasks.', isFree: true },
         { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Complex multi-turn instruction following.', isFree: true },
         { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Extremely fast, high-volume lower cost model.', isFree: true },
       ];
+
+      const keysToTry = apiKey ? [apiKey] : getGeminiKeys();
+      if (keysToTry.length > 0) {
+        try {
+          const client = new GoogleGenAI({ 
+            apiKey: keysToTry[0],
+            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+          });
+          const apiModels: any = await client.models.list();
+          let listArray: any[] = [];
+          if (Array.isArray(apiModels)) {
+            listArray = apiModels;
+          } else if (apiModels && Array.isArray(apiModels.models)) {
+            listArray = apiModels.models;
+          } else if (apiModels && typeof apiModels[Symbol.iterator] === 'function') {
+            listArray = Array.from(apiModels);
+          } else if (apiModels && Array.isArray(apiModels.items)) {
+            listArray = apiModels.items;
+          }
+
+          if (listArray && listArray.length > 0) {
+            const list = listArray.map((m: any) => ({
+              id: m.name ? m.name.replace('models/', '') : '',
+              name: m.displayName || (m.name ? m.name.replace('models/', '') : ''),
+              description: m.description || `Supported actions: ${m.supportedGenerationMethods?.join(', ') || 'N/A'}`,
+              isFree: true
+            })).filter(m => m.id);
+
+            const existingIds = new Set(geminiModels.map(gm => gm.id));
+            list.forEach((m: any) => {
+              if (!existingIds.has(m.id)) {
+                geminiModels.push(m);
+              }
+            });
+          }
+        } catch (apiErr: any) {
+          console.warn('Could not fetch dynamic models from Gemini API directly:', apiErr.message);
+        }
+      }
+
       return res.json({ models: geminiModels });
     } else if (engine === 'ollama') {
       const response = await fetch(`${ollamaUrl}/api/tags`);
@@ -1992,7 +2052,7 @@ app.post('/api/studio/jobs', async (req, res) => {
         const imageProviders: Record<string, { needsKey: boolean, call: (prompt: string, key?: string, requestedModel?: string) => Promise<string> }> = {
           nanoBanana: {
             needsKey: true,
-            call: async (promptText: string, key?: string) => {
+            call: async (promptText: string, key?: string, requestedModel?: string) => {
               const keysToTry = key ? [key] : getGeminiKeys();
               if (keysToTry.length === 0) {
                 throw new Error('Gemini API client not initialized. Provide an API key.');
@@ -2002,39 +2062,90 @@ app.post('/api/studio/jobs', async (req, res) => {
               for (let i = 0; i < keysToTry.length; i++) {
                 const currentKey = keysToTry[i];
                 try {
+                  const selectedModel = requestedModel || 'gemini-2.5-flash-image';
+                  
                   const client = new GoogleGenAI({ 
                     apiKey: currentKey,
+                    apiVersion: selectedModel.startsWith('imagen-') ? 'v1' : undefined,
                     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
                   });
                   
-                  let response;
-                  try {
-                    response = await client.models.generateContent({
-                      model: 'gemini-2.5-flash-image',
-                      contents: [{ role: 'user', parts: [{ text: promptText + ` (aspect ratio: ${selectedRatio})` }] }],
+                  if (selectedModel.startsWith('imagen-')) {
+                    // Map selectedRatio to Imagen aspect ratios ('1:1', '3:4', '4:3', '16:9', '9:16')
+                    let imgRatio: any = '1:1';
+                    if (['1:1', '3:4', '4:3', '16:9', '9:16'].includes(selectedRatio)) {
+                      imgRatio = selectedRatio;
+                    } else if (selectedRatio === '2:3') {
+                      imgRatio = '3:4';
+                    } else if (selectedRatio === '3:2') {
+                      imgRatio = '4:3';
+                    }
+
+                    const response = await client.models.generateImages({
+                      model: selectedModel,
+                      prompt: promptText,
                       config: {
-                         responseModalities: ["IMAGE"] as any
+                        numberOfImages: 1,
+                        outputMimeType: 'image/jpeg',
+                        aspectRatio: imgRatio,
                       }
                     });
-                  } catch (apiErr: any) {
-                    throw new Error(`API_ERROR [Status: ${apiErr.status || 'UNKNOWN'}]: ${apiErr.message}`);
-                  }
-                  
-                  try {
-                    const candidates = response.candidates;
-                    if (candidates && candidates.length > 0) {
-                       for (const part of candidates[0].content.parts) {
-                         if (part.inlineData && part.inlineData.data) {
-                           return `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data}`;
+
+                    if (response.generatedImages && response.generatedImages.length > 0) {
+                      const base64Data = response.generatedImages[0].image.imageBytes;
+                      return `data:image/jpeg;base64,${base64Data}`;
+                    }
+                    throw new Error('No images returned by Google Imagen API');
+                  } else {
+                    let response;
+                    try {
+                      const isGemini3ImageModel = selectedModel.includes('gemini-3');
+                      
+                      if (isGemini3ImageModel) {
+                        let imgRatio = '1:1';
+                        if (['1:1', '3:4', '4:3', '16:9', '9:16'].includes(selectedRatio)) {
+                          imgRatio = selectedRatio;
+                        }
+                        
+                        response = await client.models.generateContent({
+                          model: selectedModel,
+                          contents: { parts: [{ text: promptText }] } as any,
+                          config: {
+                            imageConfig: {
+                              aspectRatio: imgRatio,
+                              imageSize: '1K'
+                            }
+                          }
+                        });
+                      } else {
+                        response = await client.models.generateContent({
+                          model: selectedModel,
+                          contents: [{ role: 'user', parts: [{ text: promptText + ` (aspect ratio: ${selectedRatio})` }] }],
+                          config: {
+                             responseModalities: ["IMAGE"] as any
+                          }
+                        });
+                      }
+                    } catch (apiErr: any) {
+                      throw new Error(`API_ERROR [Status: ${apiErr.status || 'UNKNOWN'}]: ${apiErr.message}`);
+                    }
+                    
+                    try {
+                      const candidates = response.candidates;
+                      if (candidates && candidates.length > 0) {
+                         for (const part of candidates[0].content.parts) {
+                           if (part.inlineData && part.inlineData.data) {
+                             return `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data}`;
+                           }
                          }
-                       }
+                      }
+                      throw new Error('PARSE_ERROR: Response shape missing expected inlineData.');
+                    } catch (parseErr: any) {
+                      if (parseErr.message.includes('PARSE_ERROR')) {
+                        throw parseErr;
+                      }
+                      throw new Error(`PARSE_ERROR: ${parseErr.message}`);
                     }
-                    throw new Error('PARSE_ERROR: Response shape missing expected inlineData.');
-                  } catch (parseErr: any) {
-                    if (parseErr.message.includes('PARSE_ERROR')) {
-                      throw parseErr;
-                    }
-                    throw new Error(`PARSE_ERROR: ${parseErr.message}`);
                   }
                 } catch (err: any) {
                   lastError = err;
@@ -2108,6 +2219,29 @@ app.post('/api/studio/jobs', async (req, res) => {
               const mimeType = contentType || 'image/jpeg';
               return `data:${mimeType};base64,${buffer.toString('base64')}`;
             }
+          },
+          'perchance': {
+            needsKey: false,
+            call: async (promptText: string) => {
+              const seed = Math.floor(Math.random() * 10000000);
+              // Perchance style: hyperrealistic, extremely detailed, cinematic
+              const styledPrompt = `${promptText}, high detail, masterpiece, 8k resolution, perchance 8v407wxeu3 artistic realism style`;
+              const dimensionQuery = `&width=${width}&height=${height}`;
+              const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(styledPrompt)}?model=flux-realism&nologo=true&seed=${seed}${dimensionQuery}&referrer=joelos`;
+              const res = await fetch(url);
+              if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`Perchance engine failed with status ${res.status}: ${text}`);
+              }
+              const contentType = res.headers.get('content-type') || '';
+              const arrayBuffer = await res.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              if (buffer.length === 0) {
+                throw new Error('Perchance engine returned an empty image buffer.');
+              }
+              const mimeType = contentType || 'image/jpeg';
+              return `data:${mimeType};base64,${buffer.toString('base64')}`;
+            }
           }
         };
 
@@ -2117,6 +2251,8 @@ app.post('/api/studio/jobs', async (req, res) => {
           selectedProvider = 'pollinations';
         } else if (model === 'openai-codex') {
           selectedProvider = 'openai-codex';
+        } else if (model === 'perchance') {
+          selectedProvider = 'perchance';
         }
 
         let provider = imageProviders[selectedProvider];
@@ -2279,7 +2415,7 @@ app.post('/api/stt/transcribe', async (req, res) => {
       headers: {
         'Content-Type': req.headers['content-type'] || 'audio/webm',
       },
-      body: req, // Pipe the request stream directly
+      body: req as any, // Pipe the request stream directly
       // @ts-ignore
       duplex: 'half'
     });
