@@ -32,8 +32,20 @@ export async function synthesizeSpeech(text: string): Promise<string | null> {
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       const voices = window.speechSynthesis.getVoices();
-      const voice = voices.find(v => v.lang === 'en-GB') || voices.find(v => v.lang.startsWith('en'));
-      if (voice) utterance.voice = voice;
+      
+      // Look specifically for common high-quality female English voices
+      const femaleVoice = voices.find(v => {
+        const name = v.name.toLowerCase();
+        return (name.includes('female') || name.includes('samantha') || name.includes('zira') || 
+                name.includes('hazel') || name.includes('susan') || name.includes('karen') || 
+                name.includes('moira') || name.includes('tessa') || name.includes('veena') ||
+                name.includes('google us english') || name.includes('microsoft zira') ||
+                name.includes('victoria') || name.includes('fiona'));
+      }) || voices.find(v => v.lang.startsWith('en'));
+      
+      if (femaleVoice) {
+        utterance.voice = femaleVoice;
+      }
       
       window.speechSynthesis.speak(utterance);
       return null; // Indicates handled directly

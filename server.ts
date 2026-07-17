@@ -256,14 +256,15 @@ app.post('/api/memory', (req, res) => {
 
 // Endpoint for generating embeddings (either Gemini or Local Vector)
 app.post('/api/embeddings', async (req, res) => {
-  const { text, engine } = req.body;
+  const { text, engine, geminiApiKey } = req.body;
   if (!text) {
     return res.status(400).json({ error: 'Text prompt is required' });
   }
 
   try {
-    if (engine === 'gemini' && getGeminiKeys().length > 0) {
-      const response: any = await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
+    const activeGeminiKey = geminiApiKey || req.body.cloudApiKey;
+    if (engine === 'gemini' && (activeGeminiKey || getGeminiKeys().length > 0)) {
+      const response: any = await executeWithGeminiFallback(activeGeminiKey, async (client) => {
         return await client.models.embedContent({
           model: 'gemini-embedding-2-preview',
           contents: text,
@@ -428,10 +429,40 @@ app.post('/api/chat', async (req, res) => {
     stream = true,
     ollamaUrl = 'http://localhost:11434',
     enableSearch = false,
+    geminiApiKey,
+    openaiApiKey,
+    openrouterApiKey,
+    kimiApiKey,
+    fccServerUrl,
+    ollamaApiKey,
+    groqApiKey,
   } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'Messages list is required' });
+  }
+
+  let activeEngine = engine;
+  if (engine === 'all' || !engine) {
+    if (model) {
+      if (model.startsWith('gemini-') || model.startsWith('gemma-') || model.startsWith('imagen-') || model.startsWith('lyria-')) {
+        activeEngine = 'gemini';
+      } else if (model.startsWith('gpt-') || model.startsWith('o1-')) {
+        activeEngine = 'openai';
+      } else if (model.includes('/') || model.startsWith('google/') || model.startsWith('anthropic/') || model.startsWith('meta-llama/')) {
+        activeEngine = 'openrouter';
+      } else if (model.startsWith('kimi-') || model.startsWith('moonshot-')) {
+        activeEngine = 'kimi';
+      } else if (model.startsWith('groq-') || model.startsWith('llama-') || model.startsWith('mixtral-')) {
+        activeEngine = 'groq';
+      } else if (model.startsWith('hermes-')) {
+        activeEngine = 'hermes';
+      } else {
+        activeEngine = 'ollama';
+      }
+    } else {
+      activeEngine = 'gemini';
+    }
   }
 
   // Set headers for SSE Streaming if active
@@ -442,7 +473,7 @@ app.post('/api/chat', async (req, res) => {
   }
 
   // Mode: Gemini Cloud Engine
-  if (engine === 'gemini') {
+  if (activeEngine === 'gemini') {
     try {
       // Map Ollama / Generic models to correct Gemini models or pass selected model directly
       let mappedModel = 'gemini-2.5-flash';
@@ -466,8 +497,10 @@ app.post('/api/chat', async (req, res) => {
         config.tools = [{ googleSearch: {} }];
       }
 
+      const activeGeminiKey = geminiApiKey || req.body.cloudApiKey;
+
       if (stream) {
-        await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
+        await executeWithGeminiFallback(activeGeminiKey, async (client) => {
           const streamResponse = await client.models.generateContentStream({
             model: mappedModel,
             contents,
@@ -487,7 +520,7 @@ app.post('/api/chat', async (req, res) => {
         });
         return res.end();
       } else {
-        const response = await executeWithGeminiFallback(req.body.cloudApiKey, async (client) => {
+        const response = await executeWithGeminiFallback(activeGeminiKey, async (client) => {
           return await client.models.generateContent({
             model: mappedModel,
             contents,
@@ -508,23 +541,59 @@ app.post('/api/chat', async (req, res) => {
     }
   }
   
-  // Mode: OpenAI compatible / OpenRouter / Hermes
-  if (engine === 'openai' || engine === 'openrouter' || engine === 'hermes') {
+  // Mode: OpenAI compatible / OpenRouter / Hermes / Kimi / Groq / Ollama Cloud / FCC Server
+  const openAICompatibleEngines = ['openai', 'openrouter', 'hermes', 'kimi', 'groq', 'ollama_cloud', 'fcc_server'];
+  if (openAICompatibleEngines.includes(activeEngine)) {
     try {
-      let apiKey = req.body.cloudApiKey;
-      if (!apiKey && engine !== 'hermes') {
-        throw new Error(`API key is required for ${engine}`);
-      } else if (!apiKey && engine === 'hermes') {
+      let apiKey = '';
+      let baseUrl = '';
+
+      if (activeEngine === 'openai') {
+        baseUrl = 'https://api.openai.com/v1/chat/completions';
+        apiKey = openaiApiKey || process.env.OPENAI_API_KEY || '';
+      } else if (activeEngine === 'openrouter') {
+        baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
+        apiKey = openrouterApiKey || process.env.OPENROUTER_API_KEY || '';
+      } else if (activeEngine === 'hermes') {
+        const hermesUrl = process.env.HERMES_GATEWAY_URL || 'http://localhost:8642';
+        baseUrl = `${hermesUrl}/v1/chat/completions`;
         apiKey = 'local-hermes-key';
+      } else if (activeEngine === 'kimi') {
+        const activeKimiKey = kimiApiKey || process.env.KIMI_API_KEY;
+        if (activeKimiKey) {
+          baseUrl = 'https://api.moonshot.cn/v1/chat/completions';
+          apiKey = activeKimiKey;
+        } else {
+          const activeFccUrl = fccServerUrl || process.env.FCC_SERVER_URL || 'http://localhost:8082';
+          baseUrl = `${activeFccUrl}/v1/chat/completions`;
+          apiKey = 'fcc-dummy-key';
+        }
+      } else if (activeEngine === 'groq') {
+        const activeGroqKey = groqApiKey || process.env.GROQ_API_KEY;
+        if (activeGroqKey) {
+          baseUrl = 'https://api.groq.com/openai/v1/chat/completions';
+          apiKey = activeGroqKey;
+        } else {
+          const activeFccUrl = fccServerUrl || process.env.FCC_SERVER_URL || 'http://localhost:8082';
+          baseUrl = `${activeFccUrl}/v1/chat/completions`;
+          apiKey = 'fcc-dummy-key';
+        }
+      } else if (activeEngine === 'ollama_cloud') {
+        const activeFccUrl = fccServerUrl || process.env.FCC_SERVER_URL || 'http://localhost:8082';
+        baseUrl = `${activeFccUrl}/v1/chat/completions`;
+        apiKey = ollamaApiKey || process.env.OLLAMA_API_KEY || 'fcc-dummy-key';
+      } else if (activeEngine === 'fcc_server') {
+        const activeFccUrl = fccServerUrl || process.env.FCC_SERVER_URL || 'http://localhost:8082';
+        baseUrl = `${activeFccUrl}/v1/chat/completions`;
+        apiKey = 'fcc-dummy-key';
       }
-      
-      const hermesUrl = process.env.HERMES_GATEWAY_URL || 'http://localhost:8642';
-      const baseUrl = engine === 'hermes'
-        ? `${hermesUrl}/v1/chat/completions`
-        : (engine === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions');
-      
+
+      if (!apiKey && activeEngine !== 'hermes' && activeEngine !== 'fcc_server') {
+        throw new Error(`API key is required for ${activeEngine}`);
+      }
+
       const formattedMessages = messages.map((m: any) => ({
-        role: m.role === 'model' ? 'assistant' : m.role,
+        role: m.role === 'model' || m.role === 'assistant' ? 'assistant' : m.role,
         content: m.content,
       }));
       if (systemInstruction) {
@@ -536,10 +605,16 @@ app.post('/api/chat', async (req, res) => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
-          ...(engine === 'openrouter' ? { 'HTTP-Referer': 'https://joelos.ai', 'X-Title': 'JoelOS' } : {})
+          ...(activeEngine === 'openrouter' ? { 'HTTP-Referer': 'https://joelos.ai', 'X-Title': 'JoelOS' } : {})
         },
         body: JSON.stringify({
-          model: model || (engine === 'hermes' ? 'hermes-3' : engine === 'openai' ? 'gpt-4o' : 'qwen/qwen-2.5-coder-32b-instruct'),
+          model: model || (
+            activeEngine === 'hermes' ? 'hermes-3' :
+            activeEngine === 'openai' ? 'gpt-4o' :
+            activeEngine === 'kimi' ? 'kimi-k2.5' :
+            activeEngine === 'groq' ? 'llama-3.3-70b-versatile' :
+            activeEngine === 'openrouter' ? 'google/gemini-2.5-flash' : 'llama3.2'
+          ),
           messages: formattedMessages,
           stream,
         })
@@ -681,13 +756,292 @@ app.post('/api/chat', async (req, res) => {
 
 // Proxy route to fetch dynamic list of models from current active engine / provider
 app.post('/api/provider-models', async (req, res) => {
-  const { engine, apiKey, ollamaUrl = 'http://localhost:11434' } = req.body;
+  const { 
+    engine, 
+    apiKey, 
+    geminiApiKey,
+    openaiApiKey,
+    openrouterApiKey,
+    kimiApiKey,
+    fccServerUrl,
+    ollamaApiKey,
+    groqApiKey,
+    ollamaUrl = 'http://localhost:11434' 
+  } = req.body;
 
   if (!engine) {
     return res.status(400).json({ error: 'Engine parameter is required' });
   }
 
   try {
+    if (engine === 'all') {
+      const geminiKeysToTry = geminiApiKey ? [geminiApiKey] : getGeminiKeys();
+      const tasks = [];
+
+      // Gemini Task
+      tasks.push((async () => {
+        const geminiModels = [
+          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Recommended default. High speed, balanced multimodal capabilities.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Premium reasoning, high-fidelity coding, and complex analysis.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)', description: 'Experimental next-gen lightweight model.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.0-pro-exp-02-05', name: 'Gemini 2.0 Pro (Experimental)', description: 'Experimental premium next-gen reasoning model.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.0-flash-thinking-exp-01-21', name: 'Gemini 2.0 Flash Thinking (Experimental)', description: 'Experimental reasoning model with internal thinking process.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-omni-flash-preview', name: 'Gemini Omni Flash Preview', description: 'Multimodal omni model preview.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'Super fast, budget-friendly lightweight model.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-3.1-flash-lite-image', name: 'Gemini 3.1 Flash Lite Image', description: 'Official Gemini 3.1 lightweight image generation model.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', description: 'Official Gemini 3.1 high-quality 1K image generation model.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image', description: 'Gemini model specialized for image generation support.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-2.5-flash-native-audio-latest', name: 'Gemini 2.5 Flash Native Audio', description: 'Audio processing and vocal generation support model.', isFree: true, provider: 'gemini' },
+          { id: 'gemma-4-31b-it', name: 'Gemma 4 31B Instruct', description: 'Gemma 4 model instruction-tuned.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, lightweight model for everyday tasks.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Complex multi-turn instruction following.', isFree: true, provider: 'gemini' },
+          { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Extremely fast, high-volume lower cost model.', isFree: true, provider: 'gemini' },
+        ];
+        
+        if (geminiKeysToTry.length > 0) {
+          try {
+            const client = new GoogleGenAI({ 
+              apiKey: geminiKeysToTry[0],
+              httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+            });
+            const apiModels: any = await client.models.list();
+            let listArray: any[] = [];
+            if (Array.isArray(apiModels)) {
+              listArray = apiModels;
+            } else if (apiModels && Array.isArray(apiModels.models)) {
+              listArray = apiModels.models;
+            } else if (apiModels && typeof apiModels[Symbol.iterator] === 'function') {
+              listArray = Array.from(apiModels);
+            } else if (apiModels && Array.isArray(apiModels.items)) {
+              listArray = apiModels.items;
+            }
+
+            if (listArray && listArray.length > 0) {
+              const list = listArray.map((m: any) => ({
+                id: m.name ? m.name.replace('models/', '') : '',
+                name: m.displayName || (m.name ? m.name.replace('models/', '') : ''),
+                description: m.description || `Supported actions: ${m.supportedGenerationMethods?.join(', ') || 'N/A'}`,
+                isFree: true,
+                provider: 'gemini'
+              })).filter(m => m.id);
+
+              const existingIds = new Set(geminiModels.map(gm => gm.id));
+              list.forEach((m: any) => {
+                if (!existingIds.has(m.id)) {
+                  geminiModels.push(m);
+                }
+              });
+            }
+          } catch (apiErr: any) {
+            console.warn('Could not fetch dynamic models from Gemini API directly:', apiErr.message);
+          }
+        }
+        return geminiModels;
+      })());
+
+      // OpenAI Task
+      if (openaiApiKey && openaiApiKey.trim().length > 0) {
+        tasks.push((async () => {
+          try {
+            const response = await fetch('https://api.openai.com/v1/models', {
+              headers: {
+                'Authorization': `Bearer ${openaiApiKey}`,
+              }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              return (data.data || [])
+                .filter((m: any) => m.id.startsWith('gpt') || m.id.startsWith('o1'))
+                .map((m: any) => ({
+                  id: m.id,
+                  name: m.id,
+                  description: 'OpenAI model',
+                  isFree: false,
+                  provider: 'openai'
+                }));
+            }
+          } catch (e: any) {
+            console.warn('OpenAI dynamic fetch failed:', e.message);
+          }
+          return [
+            { id: 'gpt-4o', name: 'gpt-4o', description: 'gpt-4o', isFree: false, provider: 'openai' },
+            { id: 'gpt-4o-mini', name: 'gpt-4o-mini', description: 'gpt-4o-mini', isFree: false, provider: 'openai' },
+            { id: 'o1-mini', name: 'o1-mini', description: 'o1-mini', isFree: false, provider: 'openai' },
+            { id: 'o1-preview', name: 'o1-preview', description: 'o1-preview', isFree: false, provider: 'openai' },
+          ];
+        })());
+      }
+
+      // OpenRouter Task
+      if (openrouterApiKey && openrouterApiKey.trim().length > 0) {
+        tasks.push((async () => {
+          try {
+            const response = await fetch('https://openrouter.ai/api/v1/models', {
+              headers: {
+                'Authorization': `Bearer ${openrouterApiKey}`,
+              }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              return (data.data || []).map((m: any) => {
+                const isFree = !m.pricing || (parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0 || m.id.endsWith(':free'));
+                return {
+                  id: m.id,
+                  name: m.name,
+                  description: m.description || '',
+                  contextLength: m.context_length || 0,
+                  pricing: m.pricing || null,
+                  isFree: isFree,
+                  provider: 'openrouter'
+                };
+              });
+            }
+          } catch (e: any) {
+            console.warn('OpenRouter dynamic fetch failed:', e.message);
+          }
+          return [
+            { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: false, provider: 'openrouter' },
+            { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: false, provider: 'openrouter' },
+            { id: 'qwen/qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', isFree: false, provider: 'openrouter' },
+            { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', isFree: false, provider: 'openrouter' },
+            { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', isFree: true, provider: 'openrouter' },
+            { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', isFree: true, provider: 'openrouter' },
+            { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B (Free)', isFree: true, provider: 'openrouter' },
+          ];
+        })());
+      }
+
+      // Ollama Task
+      tasks.push((async () => {
+        try {
+          const response = await fetch(`${ollamaUrl}/api/tags`);
+          if (response.ok) {
+            const data = await response.json();
+            return (data.models || []).map((m: any) => ({
+              id: m.name,
+              name: m.name,
+              description: `Size: ${(m.size / (1024 * 1024 * 1024)).toFixed(2)} GB - Format: ${m.details?.format || 'GGUF'}`,
+              isFree: true,
+              provider: 'ollama'
+            }));
+          }
+        } catch (e) {
+          // Ollama is offline
+        }
+        return [];
+      })());
+
+      // Hermes Task
+      tasks.push((async () => {
+        return [
+          { id: 'hermes-3', name: 'Hermes 3 (Local Gateway)', description: 'Hermes 3 local model router', isFree: true, provider: 'hermes' }
+        ];
+      })());
+
+      // Groq Task
+      if (groqApiKey && groqApiKey.trim().length > 0) {
+        tasks.push((async () => {
+          try {
+            const response = await fetch('https://api.groq.com/openai/v1/models', {
+              headers: {
+                'Authorization': `Bearer ${groqApiKey}`,
+              }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              return (data.data || []).map((m: any) => ({
+                id: m.id,
+                name: m.id,
+                description: 'Groq Model',
+                isFree: false,
+                provider: 'groq'
+              }));
+            }
+          } catch (e: any) {
+            console.warn('Groq dynamic fetch failed:', e.message);
+          }
+          return [
+            { id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', isFree: false, provider: 'groq' },
+            { id: 'llama-3.1-8b-instant', name: 'llama-3.1-8b-instant', isFree: false, provider: 'groq' },
+            { id: 'gemma2-9b-it', name: 'gemma2-9b-it', isFree: false, provider: 'groq' },
+            { id: 'mixtral-8x7b-32768', name: 'mixtral-8x7b-32768', isFree: false, provider: 'groq' }
+          ];
+        })());
+      } else if (process.env.GROQ_API_KEY) {
+        tasks.push((async () => {
+          return [
+            { id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', isFree: false, provider: 'groq' },
+            { id: 'llama-3.1-8b-instant', name: 'llama-3.1-8b-instant', isFree: false, provider: 'groq' },
+            { id: 'gemma2-9b-it', name: 'gemma2-9b-it', isFree: false, provider: 'groq' },
+            { id: 'mixtral-8x7b-32768', name: 'mixtral-8x7b-32768', isFree: false, provider: 'groq' }
+          ];
+        })());
+      }
+
+      // Kimi Task
+      if (kimiApiKey && kimiApiKey.trim().length > 0) {
+        tasks.push((async () => {
+          try {
+            const response = await fetch('https://api.moonshot.cn/v1/models', {
+              headers: {
+                'Authorization': `Bearer ${kimiApiKey}`,
+              }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              return (data.data || []).map((m: any) => ({
+                id: m.id,
+                name: m.id,
+                description: 'Kimi Model',
+                isFree: false,
+                provider: 'kimi'
+              }));
+            }
+          } catch (e: any) {
+            console.warn('Kimi dynamic fetch failed:', e.message);
+          }
+          return [
+            { id: 'moonshot-v1-8k', name: 'moonshot-v1-8k', isFree: false, provider: 'kimi' },
+            { id: 'moonshot-v1-32k', name: 'moonshot-v1-32k', isFree: false, provider: 'kimi' },
+            { id: 'moonshot-v1-128k', name: 'moonshot-v1-128k', isFree: false, provider: 'kimi' }
+          ];
+        })());
+      } else if (process.env.KIMI_API_KEY) {
+        tasks.push((async () => {
+          return [
+            { id: 'moonshot-v1-8k', name: 'moonshot-v1-8k', isFree: false, provider: 'kimi' },
+            { id: 'moonshot-v1-32k', name: 'moonshot-v1-32k', isFree: false, provider: 'kimi' },
+            { id: 'moonshot-v1-128k', name: 'moonshot-v1-128k', isFree: false, provider: 'kimi' }
+          ];
+        })());
+      }
+
+      // FCC Server Task
+      const activeFccUrl = fccServerUrl || process.env.FCC_SERVER_URL || 'http://localhost:8082';
+      tasks.push((async () => {
+        try {
+          const response = await fetch(`${activeFccUrl}/v1/models`);
+          if (response.ok) {
+            const data = await response.json();
+            return (data.data || []).map((m: any) => ({
+              id: m.id,
+              name: m.id,
+              description: 'fcc-server routed model',
+              isFree: true,
+              provider: 'fcc_server'
+            }));
+          }
+        } catch (e) {
+          // fcc-server offline
+        }
+        return [];
+      })());
+
+      const results = await Promise.all(tasks);
+      const allModels = results.flat();
+      return res.json({ models: allModels });
+    }
+
     if (engine === 'openrouter') {
       const response = await fetch('https://openrouter.ai/api/v1/models', {
         headers: {
@@ -707,6 +1061,7 @@ app.post('/api/provider-models', async (req, res) => {
           contextLength: m.context_length || 0,
           pricing: m.pricing || null,
           isFree: isFree,
+          provider: 'openrouter'
         };
       });
       return res.json({ models: formattedModels });
@@ -726,27 +1081,28 @@ app.post('/api/provider-models', async (req, res) => {
           id: m.id,
           name: m.id,
           isFree: false,
+          provider: 'openai'
         }));
       return res.json({ models: formattedModels });
     } else if (engine === 'gemini') {
       const geminiModels = [
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Recommended default. High speed, balanced multimodal capabilities.', isFree: true },
-        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Premium reasoning, high-fidelity coding, and complex analysis.', isFree: true },
-        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)', description: 'Experimental next-gen lightweight model.', isFree: true },
-        { id: 'gemini-2.0-pro-exp-02-05', name: 'Gemini 2.0 Pro (Experimental)', description: 'Experimental premium next-gen reasoning model.', isFree: true },
-        { id: 'gemini-2.0-flash-thinking-exp-01-21', name: 'Gemini 2.0 Flash Thinking (Experimental)', description: 'Experimental reasoning model with internal thinking process.', isFree: true },
-        { id: 'gemini-omni-flash-preview', name: 'Gemini Omni Flash Preview', description: 'Multimodal omni model preview.', isFree: true },
-        { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'Super fast, budget-friendly lightweight model.', isFree: true },
-        { id: 'gemini-3.1-flash-lite-image', name: 'Gemini 3.1 Flash Lite Image', description: 'Official Gemini 3.1 lightweight image generation model.', isFree: true },
-        { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', description: 'Official Gemini 3.1 high-quality 1K image generation model.', isFree: true },
-        { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image', description: 'Gemini model specialized for image generation support.', isFree: true },
-        { id: 'gemini-2.5-flash-native-audio-latest', name: 'Gemini 2.5 Flash Native Audio', description: 'Audio processing and vocal generation support model.', isFree: true },
-        { id: 'perchance', name: 'Perchance Image Gen (8v407wxeu3)', description: 'Free high-fidelity stylized artistic image generator.', isFree: true },
-        { id: 'gemma-4-31b-it', name: 'Gemma 4 31B Instruct', description: 'Gemma 4 model instruction-tuned.', isFree: true },
-        { id: 'lyria-3-clip-preview', name: 'Lyria 3 Clip Preview', description: 'Audio/music clip generation support model.', isFree: true },
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, lightweight model for everyday tasks.', isFree: true },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Complex multi-turn instruction following.', isFree: true },
-        { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Extremely fast, high-volume lower cost model.', isFree: true },
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Recommended default. High speed, balanced multimodal capabilities.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Premium reasoning, high-fidelity coding, and complex analysis.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)', description: 'Experimental next-gen lightweight model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.0-pro-exp-02-05', name: 'Gemini 2.0 Pro (Experimental)', description: 'Experimental premium next-gen reasoning model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.0-flash-thinking-exp-01-21', name: 'Gemini 2.0 Flash Thinking (Experimental)', description: 'Experimental reasoning model with internal thinking process.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-omni-flash-preview', name: 'Gemini Omni Flash Preview', description: 'Multimodal omni model preview.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'Super fast, budget-friendly lightweight model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-3.1-flash-lite-image', name: 'Gemini 3.1 Flash Lite Image', description: 'Official Gemini 3.1 lightweight image generation model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', description: 'Official Gemini 3.1 high-quality 1K image generation model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image', description: 'Gemini model specialized for image generation support.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.5-flash-native-audio-latest', name: 'Gemini 2.5 Flash Native Audio', description: 'Audio processing and vocal generation support model.', isFree: true, provider: 'gemini' },
+        { id: 'perchance', name: 'Perchance Image Gen (8v407wxeu3)', description: 'Free high-fidelity stylized artistic image generator.', isFree: true, provider: 'gemini' },
+        { id: 'gemma-4-31b-it', name: 'Gemma 4 31B Instruct', description: 'Gemma 4 model instruction-tuned.', isFree: true, provider: 'gemini' },
+        { id: 'lyria-3-clip-preview', name: 'Lyria 3 Clip Preview', description: 'Audio/music clip generation support model.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, lightweight model for everyday tasks.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Complex multi-turn instruction following.', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Extremely fast, high-volume lower cost model.', isFree: true, provider: 'gemini' },
       ];
 
       const keysToTry = apiKey ? [apiKey] : getGeminiKeys();
@@ -773,7 +1129,8 @@ app.post('/api/provider-models', async (req, res) => {
               id: m.name ? m.name.replace('models/', '') : '',
               name: m.displayName || (m.name ? m.name.replace('models/', '') : ''),
               description: m.description || `Supported actions: ${m.supportedGenerationMethods?.join(', ') || 'N/A'}`,
-              isFree: true
+              isFree: true,
+              provider: 'gemini'
             })).filter(m => m.id);
 
             const existingIds = new Set(geminiModels.map(gm => gm.id));
@@ -800,6 +1157,7 @@ app.post('/api/provider-models', async (req, res) => {
         name: m.name,
         description: `Size: ${(m.size / (1024 * 1024 * 1024)).toFixed(2)} GB - Format: ${m.details?.format || 'GGUF'}`,
         isFree: true,
+        provider: 'ollama'
       }));
       return res.json({ models: formattedModels });
     } else {
@@ -2428,6 +2786,132 @@ app.post('/api/stt/transcribe', async (req, res) => {
   } catch (err: any) {
     console.error('STT Sidecar proxy error:', err);
     return res.status(500).json({ error: 'Failed to contact local STT sidecar', details: err.message });
+  }
+});
+
+app.post('/api/voice/stream-response', async (req, res) => {
+  const {
+    messages,
+    voiceProvider = 'groq',
+    voiceModel,
+    cloudApiKey,
+  } = req.body;
+
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'Messages list is required' });
+  }
+
+  // Set SSE Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const fccServerUrl = process.env.FCC_SERVER_URL || 'http://localhost:8082';
+
+  // Format messages to conform to standard OpenAI roles
+  const formattedMessages = messages.map((m: any) => {
+    // Some formats have sender instead of role, let's support both
+    const sender = m.sender || m.role;
+    const role = (sender === 'user' || sender === 'system') ? sender : 'assistant';
+    const content = m.text || m.content || '';
+    return { role, content };
+  });
+
+  try {
+    if (voiceProvider === 'gemini') {
+      // Stream directly via Gemini SDK for ultra-low latency
+      await executeWithGeminiFallback(cloudApiKey, async (client) => {
+        const contents = formattedMessages.map((m: any) => ({
+          role: m.role === 'assistant' ? 'model' : m.role,
+          parts: [{ text: m.content }],
+        }));
+        const streamResponse = await client.models.generateContentStream({
+          model: voiceModel || 'gemini-2.5-flash',
+          contents,
+        });
+
+        for await (const chunk of streamResponse) {
+          const text = chunk.text || '';
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
+      });
+      return res.end();
+    } else {
+      // Route to OpenAI-compatible endpoint (fcc-server or OpenRouter)
+      let baseUrl = `${fccServerUrl}/v1/chat/completions`;
+      let apiKey = 'fcc-dummy-key';
+      let mappedModel = voiceModel;
+
+      if (voiceProvider === 'groq') {
+        mappedModel = voiceModel || 'llama-3.3-70b-versatile';
+        apiKey = process.env.GROQ_API_KEY || 'fcc-dummy-key';
+      } else if (voiceProvider === 'kimi') {
+        mappedModel = voiceModel || 'kimi-k2.5';
+        apiKey = process.env.KIMI_API_KEY || 'fcc-dummy-key';
+      } else if (voiceProvider === 'ollama_cloud') {
+        mappedModel = voiceModel || 'llama3.2';
+        apiKey = process.env.OLLAMA_API_KEY || 'fcc-dummy-key';
+      } else if (voiceProvider === 'openrouter') {
+        baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
+        mappedModel = voiceModel || 'google/gemini-2.5-flash';
+        apiKey = process.env.OPENROUTER_API_KEY || '';
+      }
+
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          ...(voiceProvider === 'openrouter' ? { 'HTTP-Referer': 'https://joelos.ai', 'X-Title': 'JoelOS' } : {})
+        },
+        body: JSON.stringify({
+          model: mappedModel,
+          messages: formattedMessages,
+          stream: true,
+        })
+      });
+
+      if (!response.ok) {
+        const txt = await response.text();
+        throw new Error(`Voice Provider API returned status ${response.status}: ${txt}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body empty');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim() === 'data: [DONE]') continue;
+          if (line.startsWith('data: ')) {
+            try {
+              const parsed = JSON.parse(line.substring(6));
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                res.write(`data: ${JSON.stringify({ text })}\n\n`);
+              }
+            } catch (e) { }
+          }
+        }
+      }
+      return res.end();
+    }
+  } catch (error: any) {
+    console.error(`Voice Provider [${voiceProvider}] error:`, error);
+    const errMsg = error.message || 'Unknown error occurred during voice chat completion';
+    res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+    return res.end();
   }
 });
 

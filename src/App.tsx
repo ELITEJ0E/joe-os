@@ -55,7 +55,8 @@ import {
   Compass,
   Radar,
   Target,
-  Mic
+  Mic,
+  Headphones
 } from 'lucide-react';
 import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarHeader, SidebarFooter, SidebarTrigger } from '../components/ui/sidebar';
 import { ModelHub } from './components/ModelHub';
@@ -375,26 +376,107 @@ const getSandboxSrcDoc = (project: any) => {
 
 export default function App() {
   // Config state
-  const [engineState, setEngineState] = useState<'gemini' | 'ollama' | 'openai' | 'openrouter' | 'hermes'>(() => {
+  const [engineState, setEngineState] = useState<'all' | 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'hermes' | 'kimi' | 'groq' | 'ollama_cloud' | 'fcc_server'>(() => {
     const saved = localStorage.getItem('joelos_engine');
-    if (saved === 'gemini' || saved === 'ollama' || saved === 'openai' || saved === 'openrouter' || saved === 'hermes') {
-      return saved;
+    if (saved) {
+      return saved as any;
     }
-    return 'gemini';
+    return 'all'; // Default to unified aggregated multi-provider engine!
   });
 
-  const setEngine = (newEngine: 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'hermes') => {
+  const setEngine = (newEngine: 'all' | 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'hermes' | 'kimi' | 'groq' | 'ollama_cloud' | 'fcc_server') => {
     setEngineState(newEngine);
     localStorage.setItem('joelos_engine', newEngine);
-    if (newEngine !== 'ollama' && newEngine !== 'hermes') {
+    if (newEngine !== 'ollama' && newEngine !== 'hermes' && newEngine !== 'all') {
       localStorage.setItem('joelos_last_cloud_engine', newEngine);
     }
   };
 
   const engine = engineState;
-  const [cloudApiKey, setCloudApiKey] = useState<string>(localStorage.getItem('joelos_cloud_api_key') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_gemini_api_key') || localStorage.getItem('joelos_cloud_api_key') || '';
+  });
+  const [openaiApiKey, setOpenaiApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_openai_api_key') || '';
+  });
+  const [openrouterApiKey, setOpenrouterApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_openrouter_api_key') || '';
+  });
+  const [kimiApiKey, setKimiApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_kimi_api_key') || '';
+  });
+  const [fccServerUrl, setFccServerUrl] = useState<string>(() => {
+    return localStorage.getItem('joelos_fcc_server_url') || 'http://localhost:8082';
+  });
+  const [ollamaApiKey, setOllamaApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_ollama_api_key') || '';
+  });
+  const [groqApiKey, setGroqApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_groq_api_key') || '';
+  });
+  const [isVoiceModeActive, setIsVoiceModeActive] = useState<boolean>(() => {
+    return localStorage.getItem('joelos_voice_mode_active') === 'true';
+  });
+  const [typedVoiceMessage, setTypedVoiceMessage] = useState<string>('');
+  const [cloudApiKey, setCloudApiKey] = useState<string>(() => {
+    return localStorage.getItem('joelos_cloud_api_key') || '';
+  });
   const [ollamaUrl, setOllamaUrl] = useState<string>('http://localhost:11434');
   const [searchGrounding, setSearchGrounding] = useState<boolean>(true);
+
+  // Synchronize cloudApiKey legacy state for compatibility with single-key endpoints
+  useEffect(() => {
+    let activeKey = '';
+    if (engine === 'gemini') activeKey = geminiApiKey;
+    else if (engine === 'openai') activeKey = openaiApiKey;
+    else if (engine === 'openrouter') activeKey = openrouterApiKey;
+    else if (engine === 'kimi') activeKey = kimiApiKey;
+    else if (engine === 'groq') activeKey = groqApiKey;
+    setCloudApiKey(activeKey);
+    localStorage.setItem('joelos_cloud_api_key', activeKey);
+  }, [engine, geminiApiKey, openaiApiKey, openrouterApiKey, kimiApiKey, groqApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem('joelos_voice_mode_active', String(isVoiceModeActive));
+  }, [isVoiceModeActive]);
+
+  // Helpers to resolve model providers and keys dynamically based on active models
+  const getModelProvider = (modelId: string) => {
+    const found = activeModelsList.find(m => m.id === modelId);
+    if (found && found.provider) return found.provider;
+    
+    // Heuristics fallbacks
+    if (!modelId) return 'gemini';
+    if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-') || modelId.startsWith('imagen-') || modelId.startsWith('lyria-')) {
+      return 'gemini';
+    }
+    if (modelId.startsWith('gpt-') || modelId.startsWith('o1-')) {
+      return 'openai';
+    }
+    if (modelId.includes('/') || modelId.startsWith('google/') || modelId.startsWith('anthropic/') || modelId.startsWith('meta-llama/')) {
+      return 'openrouter';
+    }
+    if (modelId.startsWith('kimi-') || modelId.startsWith('moonshot-')) {
+      return 'kimi';
+    }
+    if (modelId.startsWith('groq-') || modelId.startsWith('llama-') || modelId.startsWith('mixtral-')) {
+      if (groqApiKey) return 'groq';
+    }
+    if (modelId.startsWith('hermes-')) {
+      return 'hermes';
+    }
+    return 'ollama';
+  };
+
+  const getProviderApiKey = (provider: string) => {
+    if (provider === 'gemini') return geminiApiKey;
+    if (provider === 'openai') return openaiApiKey;
+    if (provider === 'openrouter') return openrouterApiKey;
+    if (provider === 'kimi') return kimiApiKey;
+    if (provider === 'groq') return groqApiKey;
+    if (provider === 'ollama_cloud') return ollamaApiKey;
+    return '';
+  };
   
   // Custom Model configuration state (using real, standard local models)
   const [agentModels, setAgentModels] = useState<Record<AgentId, string>>(() => {
@@ -430,6 +512,21 @@ export default function App() {
   const [ollamaModelDetails, setOllamaModelDetails] = useState<OllamaModelInfo[]>([]);
   const [showModelHub, setShowModelHub] = useState<boolean>(false);
   const [agentVoiceEnabled, setAgentVoiceEnabled] = useState<boolean>(false);
+  const [voiceProvider, setVoiceProvider] = useState<string>(() => {
+    return localStorage.getItem('joelos_voice_provider') || 'groq';
+  });
+  const [voiceModel, setVoiceModel] = useState<string>(() => {
+    return localStorage.getItem('joelos_voice_model') || 'llama-3.3-70b-versatile';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('joelos_voice_provider', voiceProvider);
+  }, [voiceProvider]);
+
+  useEffect(() => {
+    localStorage.setItem('joelos_voice_model', voiceModel);
+  }, [voiceModel]);
+
   const [messageAudioUrls, setMessageAudioUrls] = useState<Record<string, string>>({});
   const [playedMessages, setPlayedMessages] = useState<Set<string>>(new Set());
   const [ollamaRefreshTrigger, setOllamaRefreshTrigger] = useState<number>(0);
@@ -1088,7 +1185,9 @@ export default function App() {
 
     let systemInst = systemInstructions[agentId] || '';
     systemInst += ` IMPORTANT DIRECT DIRECTIVE: You are in a direct 1-on-1 private chat with the user. Answer the user directly, provide helpful technical facts, specifications, code guidelines, or direct answers. Do NOT delegate tasks or output a delegation sequence like "DELEGATION SEQUENCE" or "1. BOSS...".`;
-    let activeModel = agentModels[agentId] || (engine === 'gemini' ? 'gemini-2.5-flash' : 'llama3.2');
+    let activeModel = agentModels[agentId] || 'gemini-2.5-flash';
+    const activeEngine = getModelProvider(activeModel);
+    const activeApiKey = getProviderApiKey(activeEngine);
 
     const botMsgId = 'private-bot-' + Date.now();
     const botMsgPlaceholder: Message = {
@@ -1109,13 +1208,20 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          engine,
+          engine: activeEngine,
           model: activeModel,
           messages: [{ role: 'user', content: text }],
           systemInstruction: systemInst,
           stream: false,
           ollamaUrl,
-          cloudApiKey,
+          cloudApiKey: activeApiKey,
+          geminiApiKey,
+          openaiApiKey,
+          openrouterApiKey,
+          kimiApiKey,
+          fccServerUrl,
+          ollamaApiKey,
+          groqApiKey,
         }),
       });
 
@@ -1651,8 +1757,14 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          engine,
-          apiKey: cloudApiKey,
+          engine: 'all',
+          geminiApiKey,
+          openaiApiKey,
+          openrouterApiKey,
+          kimiApiKey,
+          fccServerUrl,
+          ollamaApiKey,
+          groqApiKey,
           ollamaUrl,
         }),
       });
@@ -1666,36 +1778,63 @@ export default function App() {
       console.error('Failed to fetch provider models:', err);
       setProviderModelsError(err.message || 'Failed to retrieve models list');
       
-      // Load fallback presets
-      if (engine === 'openrouter') {
-        setAvailableProviderModels([
-          { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: false },
-          { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: false },
-          { id: 'qwen/qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', isFree: false },
-          { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', isFree: false },
-          { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', isFree: true },
-          { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', isFree: true },
-          { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B (Free)', isFree: true },
-          { id: 'openchat/openchat-7b:free', name: 'OpenChat 7B (Free)', isFree: true },
-        ]);
-      } else if (engine === 'openai') {
-        setAvailableProviderModels([
-          { id: 'gpt-4o', name: 'gpt-4o', isFree: false },
-          { id: 'gpt-4o-mini', name: 'gpt-4o-mini', isFree: false },
-          { id: 'o1-mini', name: 'o1-mini', isFree: false },
-          { id: 'o1-preview', name: 'o1-preview', isFree: false },
-        ]);
-      } else if (engine === 'gemini') {
-        setAvailableProviderModels([
-          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: true },
-          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: true },
-          { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', isFree: true },
-          { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', isFree: true },
-          { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', isFree: true },
-        ]);
-      } else {
-        setAvailableProviderModels([]);
+      // Load fallbacks for ALL engines that are configured!
+      const fallbacks: any[] = [];
+      
+      // Always Gemini (fallback)
+      fallbacks.push(
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: true, provider: 'gemini' },
+        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', isFree: true, provider: 'gemini' },
+        { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', isFree: true, provider: 'gemini' }
+      );
+      
+      if (openaiApiKey) {
+        fallbacks.push(
+          { id: 'gpt-4o', name: 'gpt-4o', isFree: false, provider: 'openai' },
+          { id: 'gpt-4o-mini', name: 'gpt-4o-mini', isFree: false, provider: 'openai' },
+          { id: 'o1-mini', name: 'o1-mini', isFree: false, provider: 'openai' },
+          { id: 'o1-preview', name: 'o1-preview', isFree: false, provider: 'openai' }
+        );
       }
+      
+      if (openrouterApiKey) {
+        fallbacks.push(
+          { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: false, provider: 'openrouter' },
+          { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: false, provider: 'openrouter' },
+          { id: 'qwen/qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', isFree: false, provider: 'openrouter' },
+          { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', isFree: false, provider: 'openrouter' },
+          { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', isFree: true, provider: 'openrouter' },
+          { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', isFree: true, provider: 'openrouter' },
+          { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B (Free)', isFree: true, provider: 'openrouter' }
+        );
+      }
+
+      if (groqApiKey) {
+        fallbacks.push(
+          { id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', isFree: false, provider: 'groq' },
+          { id: 'llama-3.1-8b-instant', name: 'llama-3.1-8b-instant', isFree: false, provider: 'groq' },
+          { id: 'gemma2-9b-it', name: 'gemma2-9b-it', isFree: false, provider: 'groq' },
+          { id: 'mixtral-8x7b-32768', name: 'mixtral-8x7b-32768', isFree: false, provider: 'groq' }
+        );
+      }
+
+      if (kimiApiKey) {
+        fallbacks.push(
+          { id: 'moonshot-v1-8k', name: 'moonshot-v1-8k', isFree: false, provider: 'kimi' },
+          { id: 'moonshot-v1-32k', name: 'moonshot-v1-32k', isFree: false, provider: 'kimi' },
+          { id: 'moonshot-v1-128k', name: 'moonshot-v1-128k', isFree: false, provider: 'kimi' }
+        );
+      }
+      
+      if (ollamaConnectionStatus === 'connected') {
+        installedOllamaModels.forEach(m => {
+          fallbacks.push({ id: m, name: m, isFree: true, provider: 'ollama' });
+        });
+      }
+      
+      setAvailableProviderModels(fallbacks);
     } finally {
       setLoadingProviderModels(false);
     }
@@ -1703,43 +1842,20 @@ export default function App() {
 
   useEffect(() => {
     fetchProviderModels();
-  }, [engine, cloudApiKey, ollamaRefreshTrigger]);
+  }, [geminiApiKey, openaiApiKey, openrouterApiKey, kimiApiKey, fccServerUrl, ollamaApiKey, groqApiKey, ollamaUrl, ollamaRefreshTrigger]);
 
   const activeModelsList = useMemo(() => {
     if (availableProviderModels && availableProviderModels.length > 0) {
       return availableProviderModels;
     }
-    // Fallbacks if availableProviderModels is not loaded yet
-    if (engine === 'gemini') {
-      return [
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: true },
-        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: true },
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', isFree: true },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', isFree: true },
-        { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', isFree: true },
-      ];
-    } else if (engine === 'openai') {
-      return [
-        { id: 'gpt-4o', name: 'gpt-4o', isFree: false },
-        { id: 'gpt-4o-mini', name: 'gpt-4o-mini', isFree: false },
-        { id: 'o1-mini', name: 'o1-mini', isFree: false },
-        { id: 'o1-preview', name: 'o1-preview', isFree: false },
-      ];
-    } else if (engine === 'openrouter') {
-      return [
-        { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: false },
-        { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: false },
-        { id: 'qwen/qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', isFree: false },
-        { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', isFree: false },
-        { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', isFree: true },
-        { id: 'meta-llama/llama-3-8b-instruct:free', name: 'Llama 3 8B (Free)', isFree: true },
-        { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B (Free)', isFree: true },
-        { id: 'openchat/openchat-7b:free', name: 'OpenChat 7B (Free)', isFree: true },
-      ];
-    } else {
-      return installedOllamaModels.map(m => ({ id: m, name: m, isFree: true }));
-    }
-  }, [engine, availableProviderModels, installedOllamaModels]);
+    return [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', isFree: true, provider: 'gemini' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', isFree: true, provider: 'gemini' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', isFree: true, provider: 'gemini' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', isFree: true, provider: 'gemini' },
+      { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', isFree: true, provider: 'gemini' },
+    ];
+  }, [availableProviderModels]);
 
   // Load memories from backend on startup
   useEffect(() => {
@@ -2087,6 +2203,13 @@ export default function App() {
     });
   };
 
+  // Send text message directly to active Voice Mode conversation
+  const handleSendVoiceTextMessage = () => {
+    if (!globalPrompt.trim()) return;
+    setTypedVoiceMessage(globalPrompt.trim());
+    setGlobalPrompt('');
+  };
+
   // Stop current active pipeline
   const stopPipelineOrchestration = () => {
     pipelineAbortedRef.current = true;
@@ -2129,6 +2252,13 @@ export default function App() {
           stream: false,
           ollamaUrl,
           cloudApiKey,
+          geminiApiKey,
+          openaiApiKey,
+          openrouterApiKey,
+          kimiApiKey,
+          fccServerUrl,
+          ollamaApiKey,
+          groqApiKey,
         }),
       });
 
@@ -2550,20 +2680,29 @@ export default function App() {
       }]);
 
       try {
-        const activeModel = engine === 'gemini' ? 'gemini-2.5-flash' : agentModels.researcher;
+        const activeModel = agentModels.researcher || 'gemini-2.5-flash';
+        const activeEngine = getModelProvider(activeModel);
+        const activeApiKey = getProviderApiKey(activeEngine);
         const researchPrompt = `Review this query and find technical facts, API specs, or code guidelines. User goal: "${targetQuery}".\n${currentConversationContext ? `Historical memories found:\n${currentConversationContext}` : ''}`;
         
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engine,
+            engine: activeEngine,
             model: activeModel,
             messages: [{ role: 'user', content: researchPrompt }],
             systemInstruction: systemInstructions.researcher,
             ollamaUrl,
-            cloudApiKey,
-            enableSearch: engine === 'gemini' && searchGrounding,
+            cloudApiKey: activeApiKey,
+            geminiApiKey,
+            openaiApiKey,
+            openrouterApiKey,
+            kimiApiKey,
+            fccServerUrl,
+            ollamaApiKey,
+            groqApiKey,
+            enableSearch: activeEngine === 'gemini' && searchGrounding,
           }),
         });
 
@@ -2696,19 +2835,28 @@ export default function App() {
       }]);
 
       try {
-        const activeModel = engine === 'gemini' ? 'gemini-2.5-flash' : agentModels.planner;
+        const activeModel = agentModels.planner || 'gemini-2.5-flash';
+        const activeEngine = getModelProvider(activeModel);
+        const activeApiKey = getProviderApiKey(activeEngine);
         const plannerPrompt = `Formulate a complete step-by-step non-coding architectural plan to satisfy this user goal: "${targetQuery}".\nUse this research analysis as backing guidelines:\n${latestResearcherContext}\n${currentConversationContext ? `Historical memory guidelines:\n${currentConversationContext}` : ''}`;
 
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engine,
+            engine: activeEngine,
             model: activeModel,
             messages: [{ role: 'user', content: plannerPrompt }],
             systemInstruction: systemInstructions.planner,
             ollamaUrl,
-            cloudApiKey,
+            cloudApiKey: activeApiKey,
+            geminiApiKey,
+            openaiApiKey,
+            openrouterApiKey,
+            kimiApiKey,
+            fccServerUrl,
+            ollamaApiKey,
+            groqApiKey,
           }),
         });
 
@@ -2842,19 +2990,28 @@ export default function App() {
       }]);
 
       try {
-        const activeModel = engine === 'gemini' ? 'gemini-2.5-pro' : agentModels.coder;
+        const activeModel = agentModels.coder || 'gemini-2.5-pro';
+        const activeEngine = getModelProvider(activeModel);
+        const activeApiKey = getProviderApiKey(activeEngine);
         const coderPrompt = `Review this architectural blueprint plan and write high-quality production-ready implementations:\n${latestPlannerOutputText}`;
 
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engine,
+            engine: activeEngine,
             model: activeModel,
             messages: [{ role: 'user', content: coderPrompt }],
             systemInstruction: systemInstructions.coder,
             ollamaUrl,
-            cloudApiKey,
+            cloudApiKey: activeApiKey,
+            geminiApiKey,
+            openaiApiKey,
+            openrouterApiKey,
+            kimiApiKey,
+            fccServerUrl,
+            ollamaApiKey,
+            groqApiKey,
           }),
         });
 
@@ -2987,19 +3144,28 @@ export default function App() {
       }]);
 
       try {
-        const activeModel = engine === 'gemini' ? 'gemini-2.5-flash' : agentModels.reviewer;
+        const activeModel = agentModels.reviewer || 'gemini-2.5-flash';
+        const activeEngine = getModelProvider(activeModel);
+        const activeApiKey = getProviderApiKey(activeEngine);
         const reviewerPrompt = `Analyze this developed code implementation for potential security vulnerabilities, performance bottlenecks, and architectural violations:\n${latestCoderOutputText}`;
 
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engine,
+            engine: activeEngine,
             model: activeModel,
             messages: [{ role: 'user', content: reviewerPrompt }],
             systemInstruction: systemInstructions.reviewer,
             ollamaUrl,
-            cloudApiKey,
+            cloudApiKey: activeApiKey,
+            geminiApiKey,
+            openaiApiKey,
+            openrouterApiKey,
+            kimiApiKey,
+            fccServerUrl,
+            ollamaApiKey,
+            groqApiKey,
           }),
         });
 
@@ -5894,8 +6060,32 @@ export default function App() {
                   setIsAutoScrollEnabled(isAtBottom);
                 }}
               >
+                {/* 1. If in voice mode, render the beautiful, tall visualizer card at the very top of the scrollable viewport! */}
+                {isVoiceModeActive && (
+                  <div className="max-w-5xl mx-auto mb-6 shrink-0">
+                    <VoiceModeChannel 
+                      messages={messages}
+                      setMessages={setMessages}
+                      voiceProvider={voiceProvider}
+                      voiceModel={voiceModel}
+                      cloudApiKey={cloudApiKey}
+                      geminiApiKey={geminiApiKey}
+                      openaiApiKey={openaiApiKey}
+                      openrouterApiKey={openrouterApiKey}
+                      isProcessing={pipelineIsRunning}
+                      typedMessageToSubmit={typedVoiceMessage}
+                      onTypedMessageProcessed={() => setTypedVoiceMessage('')}
+                    />
+                  </div>
+                )}
+
                 {messages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto">
+                  isVoiceModeActive ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto text-emerald-500/60 font-mono text-xs">
+                      🎙️ Cortana session initialized. Start speaking or type in the box below to converse...
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto">
                     <div className="relative mb-6">
                       <div className="absolute inset-0 bg-emerald-500/10 blur-2xl rounded-full scale-125 animate-pulse"></div>
                       <div className="relative w-16 h-16 rounded-2xl border border-emerald-400/40 bg-[#020503] flex items-center justify-center shadow-lg shadow-emerald-500/15">
@@ -5922,7 +6112,7 @@ export default function App() {
                         <span className="text-slate-300 group-hover:text-white line-clamp-1 font-sans">"Create a responsive Tailwind landing page banner"</span>
                       </button>
                     </div>
-                  </div>
+                  </div>)
                 ) : (
                   <div className="space-y-6 max-w-5xl mx-auto">
                     {messages.map((msg) => {
@@ -6269,19 +6459,6 @@ export default function App() {
               <div className={`p-6 border-t border-emerald-900/30 ${theme === 'oled' ? 'bg-black' : 'bg-[#030604]'}`}>
                 <div className="max-w-5xl mx-auto flex flex-col gap-4 relative">
                   
-                  {/* Voice Mode integration */}
-                  {chatTab !== 'private' && (
-                    <div className="w-full flex justify-center mb-2">
-                      <VoiceModeChannel 
-                        isProcessing={pipelineIsRunning}
-                        lastAssistantMessage={messages.length > 0 && messages[messages.length - 1].sender !== 'user' ? messages[messages.length - 1].text : null}
-                        onSendMessage={async (text) => {
-                          startPipelineOrchestration(undefined, text);
-                        }}
-                      />
-                    </div>
-                  )}
-
                   <div className="flex gap-3 relative items-end">
                     <div className="relative flex-1">
                       <textarea
@@ -6292,6 +6469,8 @@ export default function App() {
                           e.preventDefault();
                           if (chatTab === 'private') {
                             sendPrivateMessage();
+                          } else if (isVoiceModeActive) {
+                            handleSendVoiceTextMessage();
                           } else {
                             startPipelineOrchestration();
                           }
@@ -6326,7 +6505,7 @@ export default function App() {
                         >
                           {agents.map(a => (
                             <option key={a.id} value={a.id} className="bg-[#020503] text-emerald-400 font-mono">
-                              {a.name} ({engine === 'gemini' ? 'gemini-2.5-flash' : (agentModels[a.id] || 'llama3.2')})
+                              {a.name} ({agentModels[a.id] || 'gemini-2.5-flash'})
                             </option>
                           ))}
                         </select>
@@ -6344,6 +6523,17 @@ export default function App() {
                       title={isListening ? "Listening... Click to stop" : "Voice input dictation"}
                     >
                       <Mic size={14} className={isListening ? "animate-bounce" : ""} />
+                    </button>
+                    <button
+                      onClick={() => setIsVoiceModeActive(prev => !prev)}
+                      className={`h-11 w-11 rounded-xl transition-all cursor-pointer flex items-center justify-center border ${
+                        isVoiceModeActive
+                          ? 'bg-[#00ff66]/20 border-[#00ff66] text-[#00ff66]'
+                          : 'bg-emerald-950/20 border-emerald-900/60 text-emerald-500 hover:text-[#00ff66] hover:border-[#00ff66]/40 hover:bg-[#10b981]/10'
+                      }`}
+                      title={isVoiceModeActive ? "Deactivate Cortana Voice Mode" : "Enter Cortana Voice Mode"}
+                    >
+                      <Headphones size={14} className={isVoiceModeActive ? "animate-pulse" : ""} />
                     </button>
                     {chatTab === 'private' ? (
                       privateIsSending ? (
@@ -6379,7 +6569,13 @@ export default function App() {
                         </button>
                       ) : (
                         <button
-                          onClick={() => startPipelineOrchestration()}
+                          onClick={() => {
+                            if (isVoiceModeActive) {
+                              handleSendVoiceTextMessage();
+                            } else {
+                              startPipelineOrchestration();
+                            }
+                          }}
                           disabled={!globalPrompt.trim()}
                           className={`h-11 w-11 rounded-xl font-bold text-xs font-mono tracking-wider transition-all cursor-pointer flex items-center justify-center border ${
                             !globalPrompt.trim()
@@ -6470,6 +6666,55 @@ export default function App() {
                       />
                     </div>
 
+                    {/* Live Voice Mode Settings */}
+                    <div className="bg-[#08150e] p-4 rounded-lg border border-emerald-950/50 flex flex-col gap-3">
+                      <div className="flex flex-col">
+                        <label className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Live Voice Assistant Brain</label>
+                        <span className="text-[10px] text-emerald-500/70 font-mono mt-0.5">Configure the dedicated fast-path LLM brain for Cortana Voice Mode</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] text-emerald-500 font-mono font-bold uppercase">Provider</label>
+                          <select
+                            value={voiceProvider}
+                            onChange={(e) => {
+                              const p = e.target.value;
+                              setVoiceProvider(p);
+                              // Default the model based on provider choice
+                              if (p === 'groq') setVoiceModel('llama-3.3-70b-versatile');
+                              else if (p === 'kimi') setVoiceModel('kimi-k2.5');
+                              else if (p === 'ollama_cloud') setVoiceModel('llama3.2');
+                              else if (p === 'gemini') setVoiceModel('gemini-2.5-flash');
+                              else if (p === 'openrouter') setVoiceModel('google/gemini-2.5-flash');
+                            }}
+                            className="rounded bg-[#050b07] border border-emerald-950 p-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-[#00ff66] cursor-pointer"
+                          >
+                            <option value="groq">Groq (Ultra-Fast Default)</option>
+                            <option value="kimi">Kimi (Highly Configured)</option>
+                            <option value="ollama_cloud">Ollama Cloud (OpenAI-Compatible)</option>
+                            <option value="gemini">Google Gemini (Direct Low-Latency)</option>
+                            <option value="openrouter">OpenRouter (Multi-Model Cloud)</option>
+                          </select>
+                        </div>
+                        
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] text-emerald-500 font-mono font-bold uppercase">Model</label>
+                          <input
+                            type="text"
+                            value={voiceModel}
+                            onChange={(e) => setVoiceModel(e.target.value)}
+                            placeholder="e.g. llama-3.3-70b-versatile"
+                            className="rounded bg-[#050b07] border border-emerald-950 p-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-[#00ff66]"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="text-[9px] text-emerald-500/50 font-mono leading-relaxed bg-black/40 p-2 rounded border border-emerald-950/30">
+                        ⚡ **Latency Optimization**: Low-latency providers (like **Groq**) combined with streamed tokens are strongly recommended to sustain interactive conversational rhythm. Ollama and Kimi calls route through your local **fcc-server** gateway.
+                      </div>
+                    </div>
+
                     <div className="space-y-4 pt-2">
                       <div className="flex items-center justify-between">
                         <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider">Agent Model Assignment</label>
@@ -6512,8 +6757,8 @@ export default function App() {
                                 className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 h-9 cursor-pointer"
                               >
                                 {activeModelsList.map(m => (
-                                  <option key={m.id} value={m.id} className="bg-[#0a0f0c] text-emerald-300">
-                                    {m.name || m.id} {m.isFree ? ' (FREE)' : ''}
+                                  <option key={`${m.provider || 'generic'}-${m.id}`} value={m.id} className="bg-[#0a0f0c] text-emerald-300">
+                                    [{m.provider?.toUpperCase() || 'OLLAMA'}] {m.name || m.id} {m.isFree ? ' (FREE)' : ''}
                                   </option>
                                 ))}
                                 <option value="custom" className="bg-[#0a0f0c] text-emerald-300">
@@ -6547,63 +6792,139 @@ export default function App() {
                 <div className="p-6 rounded-2xl border-2 border-emerald-800 bg-[#05140b] space-y-4">
                   <div className="flex items-center gap-2 pb-2 border-b border-emerald-950">
                     <Sparkles size={16} className="text-emerald-400" />
-                    <h3 className="font-display font-semibold text-sm text-white">Cloud API Keys</h3>
+                    <h3 className="font-display font-semibold text-sm text-white">Active Engine & API Keys</h3>
                   </div>
 
                   <div className="space-y-4 text-xs">
                     <div className="p-3 rounded-lg bg-emerald-950/15 border border-emerald-500/10 space-y-1 text-emerald-300 leading-relaxed text-[11px]">
-                      <span className="font-bold text-emerald-300 block">Custom Providers</span>
-                      Provide an API key to use models from OpenAI, OpenRouter, or Gemini Cloud instead of local execution.
+                      <span className="font-bold text-emerald-300 block">Unified Multi-Provider Engine</span>
+                      Configure multiple API keys simultaneously below. JoelOS will parallelize and aggregate models from all active providers in the Agent Model Assignment!
                     </div>
                     
-                    <div>
-                      <label className="block text-xs font-mono text-emerald-400/80 mb-1.5">Active Engine</label>
-                      <select
-                        value={engine}
-                        onChange={(e) => setEngine(e.target.value as any)}
-                        className="w-full rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 h-9 cursor-pointer"
-                      >
-                        <option value="gemini" className="bg-[#0a0f0c] text-emerald-300">Google Gemini AI</option>
-                        <option value="openai" className="bg-[#0a0f0c] text-emerald-300">OpenAI</option>
-                        <option value="openrouter" className="bg-[#0a0f0c] text-emerald-300">OpenRouter (Nvidia, Anthropic, etc)</option>
-                        <option value="ollama" className="bg-[#0a0f0c] text-emerald-300">Ollama (Local Models)</option>
-                        <option value="hermes" className="bg-[#0a0f0c] text-emerald-300">Hermes (Local Gateway Router)</option>
-                      </select>
-                    </div>
-
-                    {engine !== 'ollama' && engine !== 'hermes' && (
-                      <div className="space-y-2">
-                        <label className="block text-[11px] text-emerald-500/70 font-bold uppercase">
-                          {engine === 'gemini' ? 'Gemini API Key' : engine === 'openai' ? 'OpenAI API Key' : 'OpenRouter API Key'}
+                    <div className="space-y-3.5">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          Google Gemini API Key
                         </label>
-                        {/* 
-                          Note: We do not perform client-side prefix validation (e.g., checking for AIzaSy)
-                          because Google AI Studio now issues keys with different formats (e.g., AQ.).
-                          The key is validated by the server when making the actual API request. 
-                        */}
                         <input
                           type="password"
-                          value={cloudApiKey}
+                          value={geminiApiKey}
                           onChange={(e) => {
-                            setCloudApiKey(e.target.value);
-                            localStorage.setItem('joelos_cloud_api_key', e.target.value);
+                            setGeminiApiKey(e.target.value);
+                            localStorage.setItem('joelos_gemini_api_key', e.target.value);
                           }}
-                          placeholder={engine === 'gemini' ? 'Leave empty to use server .env' : 'sk-...'}
-                          className="w-full mt-1.5 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                          placeholder="Leave empty to use server .env (AIzaSy...)"
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
                         />
                       </div>
-                    )}
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          OpenAI API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={openaiApiKey}
+                          onChange={(e) => {
+                            setOpenaiApiKey(e.target.value);
+                            localStorage.setItem('joelos_openai_api_key', e.target.value);
+                          }}
+                          placeholder="sk-proj-..."
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          OpenRouter API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={openrouterApiKey}
+                          onChange={(e) => {
+                            setOpenrouterApiKey(e.target.value);
+                            localStorage.setItem('joelos_openrouter_api_key', e.target.value);
+                          }}
+                          placeholder="sk-or-v1-..."
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          Kimi API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={kimiApiKey}
+                          onChange={(e) => {
+                            setKimiApiKey(e.target.value);
+                            localStorage.setItem('joelos_kimi_api_key', e.target.value);
+                          }}
+                          placeholder="Moonshot API Key..."
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          FCC Server URL
+                        </label>
+                        <input
+                          type="text"
+                          value={fccServerUrl}
+                          onChange={(e) => {
+                            setFccServerUrl(e.target.value);
+                            localStorage.setItem('joelos_fcc_server_url', e.target.value);
+                          }}
+                          placeholder="http://localhost:8082"
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          Ollama API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={ollamaApiKey}
+                          onChange={(e) => {
+                            setOllamaApiKey(e.target.value);
+                            localStorage.setItem('joelos_ollama_api_key', e.target.value);
+                          }}
+                          placeholder="Ollama API Key (if required)..."
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] text-emerald-500/70 font-bold uppercase">
+                          Groq API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={groqApiKey}
+                          onChange={(e) => {
+                            setGroqApiKey(e.target.value);
+                            localStorage.setItem('joelos_groq_api_key', e.target.value);
+                          }}
+                          placeholder="gsk_..."
+                          className="w-full mt-1 rounded bg-[#0a0f0c] border border-emerald-950 p-2 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
 
                     <div className="flex items-center justify-between p-3 rounded-lg bg-[#0a0f0c]/60 border border-emerald-950 mt-4">
                       <div>
                         <span className="font-semibold block text-slate-200">Google Search Grounding</span>
-                        <span className="text-[10px] text-emerald-500/60">Only supported on Gemini engine.</span>
+                        <span className="text-[10px] text-emerald-500/60">Supported on Gemini-based queries.</span>
                       </div>
                       <Switch
                         checked={searchGrounding}
                         onCheckedChange={setSearchGrounding}
-                        disabled={engine !== 'gemini'}
-                        className={engine !== 'gemini' ? 'opacity-50 cursor-not-allowed' : ''}
+                        disabled={engine !== 'gemini' && engine !== 'all'}
+                        className={(engine !== 'gemini' && engine !== 'all') ? 'opacity-50 cursor-not-allowed' : ''}
                       />
                     </div>
 
