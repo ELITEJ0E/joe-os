@@ -417,7 +417,6 @@ export default function App() {
   const [isVoiceModeActive, setIsVoiceModeActive] = useState<boolean>(() => {
     return localStorage.getItem('joelos_voice_mode_active') === 'true';
   });
-  const [typedVoiceMessage, setTypedVoiceMessage] = useState<string>('');
   const [cloudApiKey, setCloudApiKey] = useState<string>(() => {
     return localStorage.getItem('joelos_cloud_api_key') || '';
   });
@@ -2201,13 +2200,6 @@ export default function App() {
       }).catch(err => console.error('Error auto-writing log to Athena memory:', err));
       return updated;
     });
-  };
-
-  // Send text message directly to active Voice Mode conversation
-  const handleSendVoiceTextMessage = () => {
-    if (!globalPrompt.trim()) return;
-    setTypedVoiceMessage(globalPrompt.trim());
-    setGlobalPrompt('');
   };
 
   // Stop current active pipeline
@@ -6060,32 +6052,8 @@ export default function App() {
                   setIsAutoScrollEnabled(isAtBottom);
                 }}
               >
-                {/* 1. If in voice mode, render the beautiful, tall visualizer card at the very top of the scrollable viewport! */}
-                {isVoiceModeActive && (
-                  <div className="max-w-5xl mx-auto mb-6 shrink-0">
-                    <VoiceModeChannel 
-                      messages={messages}
-                      setMessages={setMessages}
-                      voiceProvider={voiceProvider}
-                      voiceModel={voiceModel}
-                      cloudApiKey={cloudApiKey}
-                      geminiApiKey={geminiApiKey}
-                      openaiApiKey={openaiApiKey}
-                      openrouterApiKey={openrouterApiKey}
-                      isProcessing={pipelineIsRunning}
-                      typedMessageToSubmit={typedVoiceMessage}
-                      onTypedMessageProcessed={() => setTypedVoiceMessage('')}
-                    />
-                  </div>
-                )}
-
                 {messages.length === 0 ? (
-                  isVoiceModeActive ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto text-emerald-500/60 font-mono text-xs">
-                      🎙️ Cortana session initialized. Start speaking or type in the box below to converse...
-                    </div>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto">
+                  <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-lg mx-auto">
                     <div className="relative mb-6">
                       <div className="absolute inset-0 bg-emerald-500/10 blur-2xl rounded-full scale-125 animate-pulse"></div>
                       <div className="relative w-16 h-16 rounded-2xl border border-emerald-400/40 bg-[#020503] flex items-center justify-center shadow-lg shadow-emerald-500/15">
@@ -6112,7 +6080,7 @@ export default function App() {
                         <span className="text-slate-300 group-hover:text-white line-clamp-1 font-sans">"Create a responsive Tailwind landing page banner"</span>
                       </button>
                     </div>
-                  </div>)
+                  </div>
                 ) : (
                   <div className="space-y-6 max-w-5xl mx-auto">
                     {messages.map((msg) => {
@@ -6459,6 +6427,23 @@ export default function App() {
               <div className={`p-6 border-t border-emerald-900/30 ${theme === 'oled' ? 'bg-black' : 'bg-[#030604]'}`}>
                 <div className="max-w-5xl mx-auto flex flex-col gap-4 relative">
                   
+                  {/* Voice Mode integration */}
+                  {chatTab !== 'private' && isVoiceModeActive && (
+                    <div className="w-full flex justify-center mb-2">
+                      <VoiceModeChannel 
+                        messages={messages}
+                        setMessages={setMessages}
+                        voiceProvider={voiceProvider}
+                        voiceModel={voiceModel}
+                        cloudApiKey={cloudApiKey}
+                        geminiApiKey={geminiApiKey}
+                        openaiApiKey={openaiApiKey}
+                        openrouterApiKey={openrouterApiKey}
+                        isProcessing={pipelineIsRunning}
+                      />
+                    </div>
+                  )}
+
                   <div className="flex gap-3 relative items-end">
                     <div className="relative flex-1">
                       <textarea
@@ -6469,8 +6454,6 @@ export default function App() {
                           e.preventDefault();
                           if (chatTab === 'private') {
                             sendPrivateMessage();
-                          } else if (isVoiceModeActive) {
-                            handleSendVoiceTextMessage();
                           } else {
                             startPipelineOrchestration();
                           }
@@ -6569,13 +6552,7 @@ export default function App() {
                         </button>
                       ) : (
                         <button
-                          onClick={() => {
-                            if (isVoiceModeActive) {
-                              handleSendVoiceTextMessage();
-                            } else {
-                              startPipelineOrchestration();
-                            }
-                          }}
+                          onClick={() => startPipelineOrchestration()}
                           disabled={!globalPrompt.trim()}
                           className={`h-11 w-11 rounded-xl font-bold text-xs font-mono tracking-wider transition-all cursor-pointer flex items-center justify-center border ${
                             !globalPrompt.trim()
